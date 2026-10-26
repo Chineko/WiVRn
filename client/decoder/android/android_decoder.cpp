@@ -21,6 +21,7 @@
 #include "application.h"
 #include "scenes/stream.h"
 #include "utils/named_thread.h"
+#include <algorithm>
 #include <android/hardware_buffer.h>
 #include <cassert>
 #include <chrono>
@@ -784,6 +785,7 @@ void decoder::create_sampler(const AHardwareBuffer_Desc & buffer_desc, vk::Andro
 	        },
 	};
 
+	ycbcr_sampler = vk::raii::SamplerYcbcrConversion(device, ycbcr_create_info.get<vk::SamplerYcbcrConversionCreateInfo>());
 	ycbcr_sampler = vk::raii::Sampler(device, sampler_info.get());
 }
 
@@ -827,7 +829,7 @@ std::shared_ptr<decoder::mapped_hardware_buffer> decoder::map_hardware_buffer(AI
 	                .initialLayout = vk::ImageLayout::eUndefined,
 	        },
 	        vk::ExternalMemoryImageCreateInfo{
-	                .handleTypes = vk::ExternalMemoryHandleTypeBits::eAndroidHardwareBufferANDROID,
+	                .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eAndroidHardwareBufferANDROID,
 	        },
 	        vk::ExternalFormatANDROID{
 	                .externalFormat = format_properties.externalFormat,

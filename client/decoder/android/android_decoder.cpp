@@ -1,7 +1,7 @@
 /*
  * WiVRn VR streaming
  * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
- * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2022-2023  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,9 +29,11 @@
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaFormat.h>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <spdlog/spdlog.h>
 #include <thread>
+#include <unordered_map>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_android.h>
 #include <vulkan/vulkan_raii.hpp>
@@ -76,7 +78,7 @@ void check(media_status_t status, const char * msg)
 	}
 }
 
-struct android_blit_handle : public decoder::blit_handle
+struct android_blit_handle : public wivrn::decoder::blit_handle
 {
 	std::shared_ptr<wivrn::android::decoder::mapped_hardware_buffer> vk_data;
 	std::shared_ptr<AImageReader> image_reader;
@@ -91,11 +93,117 @@ struct android_blit_handle : public decoder::blit_handle
 	        decltype(vk_data) vk_data,
 	        decltype(image_reader) image_reader,
 	        decltype(aimage) aimage) :
-	        decoder::blit_handle(feedback, view_info, image_view, image, extent, current_layout),
+	        wivrn::decoder::blit_handle(feedback, view_info, image_view, image, extent, current_layout),
 	        vk_data(vk_data),
 	        image_reader(image_reader),
 	        aimage(std::move(aimage)) {}
 };
+
+// Helix 0.1 deliberately keeps the wire protocol unchanged. Decoder failures are
+// reported to the existing server-side IDR handler by replaying the most recent
+// complete frame feedback with sent_to_decoder cleared. This distinguishes a
+// decoder-side failure locally while remaining compatible with upstream servers.
+struct helix_decoder_health
+{
+	std::mutex mutex;
+	std::optional<wivrn::from_headset::feedback> last_complete_feedback;
+	uint64_t first_submitted_frame = 0;
+	uint64_t last_submitted_frame = 0;
+	uint64_t last_decoded_frame = 0;
+	uint64_t last_recovery_request_frame = 0;
+	bool recovery_pending = false;
+};
+
+std::mutex helix_health_map_mutex;
+std::unordered_map<wivrn::android::decoder *, std::shared_ptr<helix_decoder_health>> helix_health_map;
+
+std::shared_ptr<helix_decoder_health> helix_health(wivrn::android::decoder * decoder)
+{
+	std::scoped_lock lock(helix_health_map_mutex);
+	auto & state = helix_health_map[decoder];
+	if (!state)
+		state = std::make_shared<helix_decoder_health>();
+	return state;
+}
+
+void helix_remove_health(wivrn::android::decoder * decoder)
+{
+	std::scoped_lock lock(helix_health_map_mutex);
+	helix_health_map.erase(decoder);
+}
+
+void helix_note_decoded(wivrn::android::decoder * decoder, uint64_t frame_index)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	if (frame_index > state->last_decoded_frame)
+		state->last_decoded_frame = frame_index;
+	if (state->recovery_pending && frame_index >= state->last_recovery_request_frame)
+	{
+		spdlog::info("Helix decoder recovery completed at frame {}", frame_index);
+		state->recovery_pending = false;
+	}
+}
+
+void helix_request_recovery(
+        wivrn::android::decoder * decoder,
+        const std::weak_ptr<scenes::stream> & weak_scene,
+        uint8_t stream_index,
+        const char * reason,
+        std::optional<uint64_t> preferred_frame = {})
+{
+	auto state = helix_health(decoder);
+	std::optional<wivrn::from_headset::feedback> recovery_feedback;
+	{
+		std::scoped_lock lock(state->mutex);
+		if (!state->last_complete_feedback)
+		{
+			spdlog::warn("Helix decoder recovery requested before any complete frame (stream {}): {}", stream_index, reason);
+			return;
+		}
+
+		uint64_t frame_index = preferred_frame.value_or(state->last_complete_feedback->frame_index);
+		// Allow a retry if the decoder has continued to consume frames without producing
+		// output. Eight frames keeps retries bounded while avoiding IDR storms.
+		if (state->recovery_pending && frame_index <= state->last_recovery_request_frame + 8)
+			return;
+
+		recovery_feedback = *state->last_complete_feedback;
+		recovery_feedback->frame_index = frame_index;
+		recovery_feedback->sent_to_decoder = 0;
+		recovery_feedback->received_from_decoder = 0;
+		recovery_feedback->blitted = 0;
+		state->recovery_pending = true;
+		state->last_recovery_request_frame = frame_index;
+	}
+
+	spdlog::warn("Helix requesting IDR for stream {} at frame {}: {}", stream_index, recovery_feedback->frame_index, reason);
+	if (auto scene = weak_scene.lock())
+		scene->send_feedback(*recovery_feedback);
+}
+
+void helix_note_submitted(
+        wivrn::android::decoder * decoder,
+        const std::weak_ptr<scenes::stream> & weak_scene,
+        uint8_t stream_index,
+        const wivrn::from_headset::feedback & feedback)
+{
+	auto state = helix_health(decoder);
+	bool stalled = false;
+	{
+		std::scoped_lock lock(state->mutex);
+		state->last_complete_feedback = feedback;
+		state->last_submitted_frame = feedback.frame_index;
+		if (state->first_submitted_frame == 0)
+			state->first_submitted_frame = feedback.frame_index;
+
+		const uint64_t base = state->last_decoded_frame != 0 ? state->last_decoded_frame : state->first_submitted_frame - 1;
+		stalled = feedback.frame_index > base + 4;
+	}
+
+	if (stalled)
+		helix_request_recovery(decoder, weak_scene, stream_index, "decoder output stalled", feedback.frame_index);
+}
 
 } // namespace
 
@@ -210,6 +318,7 @@ decoder::~decoder()
 	if (worker.joinable())
 		worker.join();
 
+	helix_remove_health(this);
 	spdlog::info("decoder::~decoder");
 }
 
@@ -229,6 +338,7 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 		if (current_input_buffer.data_size + sub_data.size() > current_input_buffer.capacity)
 		{
 			spdlog::error("data to decode is larger than decoder buffer, skipping frame");
+			helix_request_recovery(this, weak_scene, stream_index, "decoder input buffer overflow", frame_index);
 			return;
 		}
 
@@ -243,9 +353,12 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 		uint64_t timestamp = frame_index * 10'000;
 		auto status = AMediaCodec_queueInputBuffer(mc, idx, 0, data_size, timestamp, 0);
 		if (status != AMEDIA_OK)
+		{
 			spdlog::error("AMediaCodec_queueInputBuffer: MediaCodec error {}({})",
 			              int(status),
 			              std::string(magic_enum::enum_name(status)).c_str());
+			helix_request_recovery(this, weak_scene, stream_index, "MediaCodec input submission failed", frame_index);
+		}
 		return false;
 	});
 	current_input_buffer = input_buffer{};
@@ -265,6 +378,7 @@ void decoder::frame_completed(const wivrn::from_headset::feedback & feedback, co
 	        .feedback = feedback,
 	        .view_info = view_info,
 	});
+	helix_note_submitted(this, weak_scene, stream_index, feedback);
 }
 
 void decoder::on_image_available(void * context, AImageReader * reader)
@@ -306,6 +420,7 @@ void decoder::on_image_available(AImageReader * reader)
 		}
 
 		assert(info->feedback.frame_index == frame_index);
+		helix_note_decoded(this, frame_index);
 
 		auto vk_data = map_hardware_buffer(image.get());
 
@@ -323,8 +438,15 @@ void decoder::on_image_available(AImageReader * reader)
 		if (auto scene = weak_scene.lock())
 			scene->push_blit_handle(accumulator, std::move(handle));
 	}
+	catch (const std::exception & e)
+	{
+		spdlog::warn("Helix image output failure on stream {}: {}", stream_index, e.what());
+		helix_request_recovery(this, weak_scene, stream_index, "image output processing failed");
+	}
 	catch (...)
 	{
+		spdlog::warn("Helix unknown image output failure on stream {}", stream_index);
+		helix_request_recovery(this, weak_scene, stream_index, "unknown image output processing failure");
 	}
 }
 
@@ -351,7 +473,6 @@ void decoder::create_sampler(const AHardwareBuffer_Desc & buffer_desc, vk::Andro
 	else
 		yuv_filter = vk::Filter::eNearest;
 
-	// Create VkSamplerYcbcrConversion
 	vk::StructureChain ycbcr_create_info{
 	        vk::SamplerYcbcrConversionCreateInfo{
 	                .format = vk::Format::eUndefined,
@@ -367,13 +488,11 @@ void decoder::create_sampler(const AHardwareBuffer_Desc & buffer_desc, vk::Andro
 	        },
 	};
 
-	// suggested values from decoder don't actually read the metadata, so it's garbage
 	ycbcr_create_info.get<vk::SamplerYcbcrConversionCreateInfo>().ycbcrRange = vk::SamplerYcbcrRange::eItuFull;
 	ycbcr_create_info.get<vk::SamplerYcbcrConversionCreateInfo>().ycbcrModel = vk::SamplerYcbcrModelConversion::eYcbcr709;
 
 	ycbcr_conversion = vk::raii::SamplerYcbcrConversion(device, ycbcr_create_info.get<vk::SamplerYcbcrConversionCreateInfo>());
 
-	// Create VkSampler
 	vk::StructureChain sampler_info{
 	        vk::SamplerCreateInfo{
 	                .magFilter = yuv_filter,
@@ -389,7 +508,7 @@ void decoder::create_sampler(const AHardwareBuffer_Desc & buffer_desc, vk::Andro
 	                .compareOp = vk::CompareOp::eNever,
 	                .minLod = 0.0f,
 	                .maxLod = 0.0f,
-	                .borderColor = vk::BorderColor::eFloatOpaqueWhite, // TODO TBC
+	                .borderColor = vk::BorderColor::eFloatOpaqueWhite,
 	                .unnormalizedCoordinates = VK_FALSE,
 	        },
 	        vk::SamplerYcbcrConversionInfo{
@@ -418,7 +537,6 @@ std::shared_ptr<decoder::mapped_hardware_buffer> decoder::map_hardware_buffer(AI
 		spdlog::info("decoded image size: {}x{}", buffer_desc.width, buffer_desc.height);
 		create_sampler(buffer_desc, ahb_format);
 		hardware_buffer_map.clear();
-		// TODO tell the reprojector to recreate the pipeline
 	}
 
 	auto it = hardware_buffer_map.find(hardware_buffer);
@@ -464,7 +582,6 @@ std::shared_ptr<decoder::mapped_hardware_buffer> decoder::map_hardware_buffer(AI
 	};
 
 	vk::raii::DeviceMemory memory(device, mem_info.get());
-
 	vimage.bindMemory(*memory, 0);
 
 	vk::StructureChain iv_info{
@@ -504,22 +621,16 @@ std::shared_ptr<decoder::mapped_hardware_buffer> decoder::map_hardware_buffer(AI
 
 void decoder::on_media_error(AMediaCodec *, void * userdata, media_status_t error, int32_t actionCode, const char * detail)
 {
-	spdlog::warn("Mediacodec error: {}", detail);
-
-	if (error == AMEDIA_ERROR_MALFORMED)
-	{
-		// Send an empty feedback packet, encoder will know we are lost
-		auto self = (decoder *)userdata;
-		if (auto scene = self->weak_scene.lock())
-			scene->send_feedback(
-			        wivrn::from_headset::feedback{
-			                .stream_index = self->stream_index});
-	}
+	auto self = (decoder *)userdata;
+	spdlog::warn("Mediacodec error {} action {}: {}", int(error), actionCode, detail ? detail : "unknown");
+	helix_request_recovery(self, self->weak_scene, self->stream_index, "MediaCodec asynchronous error");
 }
+
 void decoder::on_media_format_changed(AMediaCodec *, void * userdata, AMediaFormat *)
 {
 	spdlog::info("Mediacodec format changed");
 }
+
 void decoder::on_media_input_available(AMediaCodec * media_codec, void * userdata, int32_t index)
 {
 	auto self = (decoder *)userdata;
@@ -531,23 +642,25 @@ void decoder::on_media_input_available(AMediaCodec * media_codec, void * userdat
 	        .data = buffer,
 	});
 }
+
 void decoder::on_media_output_available(AMediaCodec * media_codec, void * userdata, int32_t index, AMediaCodecBufferInfo * bufferInfo)
 {
 	auto self = (decoder *)userdata;
 	self->jobs.push([=]() {
 		auto status = AMediaCodec_releaseOutputBuffer(media_codec, index, true);
-		// will trigger on_image_available through ImageReader
 		if (status != AMEDIA_OK)
+		{
 			spdlog::error("AMediaCodec_releaseOutputBuffer: MediaCodec error {}({})",
 			              int(status),
 			              std::string(magic_enum::enum_name(status)).c_str());
+			helix_request_recovery(self, self->weak_scene, self->stream_index, "MediaCodec output release failed");
+		}
 		return false;
 	});
 }
 
 static bool hardware_accelerated(AMediaCodec * media_codec)
 {
-	// MediaCodecInfo has isHardwareAccelerated, but this does not exist in NDK.
 	char * name;
 	AMediaCodec_getName(media_codec, &name);
 	auto release = [&]() {
@@ -570,10 +683,8 @@ static bool hardware_accelerated(AMediaCodec * media_codec)
 
 void decoder::supported_codecs(std::vector<wivrn::video_codec> & result)
 {
-	// Make sure we update this code when codecs are changed
 	static_assert(magic_enum::enum_count<wivrn::video_codec>() == 4);
 
-	// In order or preference, from preferred to least preferred
 	for (auto codec: {
 	             wivrn::video_codec::av1,
 	             wivrn::video_codec::h265,

@@ -23,6 +23,8 @@
 #include "utils/named_thread.h"
 #include <android/hardware_buffer.h>
 #include <cassert>
+#include <chrono>
+#include <deque>
 #include <future>
 #include <magic_enum.hpp>
 #include <media/NdkImage.h>
@@ -100,6 +102,18 @@ struct android_blit_handle : public decoder::blit_handle
 	        aimage(std::move(aimage)) {}
 };
 
+using helix_clock = std::chrono::steady_clock;
+constexpr size_t helix_submit_history_limit = 64;
+
+enum class helix_decoder_failure
+{
+	input_buffer_overflow,
+	input_submission,
+	async_codec,
+	output_release,
+	image_output,
+};
+
 // Helix 0.1 keeps the wire protocol unchanged. Decoder-side failures are
 // reported through the existing feedback path by replaying the most recent
 // complete frame with sent_to_decoder cleared. The server's existing IDR
@@ -110,11 +124,34 @@ struct helix_decoder_health
 	std::optional<wivrn::from_headset::feedback> last_complete_feedback;
 	std::optional<uint64_t> first_submitted_frame;
 	std::optional<uint64_t> last_decoded_frame;
+	std::unordered_map<uint64_t, helix_clock::time_point> submitted_at;
+	std::deque<uint64_t> submit_order;
+	std::optional<helix_clock::time_point> recovery_started_at;
 	uint64_t last_recovery_request_frame = 0;
 	uint64_t codec_generation = 0;
 	unsigned recovery_requests = 0;
 	bool recovery_pending = false;
 	bool flush_attempted = false;
+	bool stall_active = false;
+
+	uint64_t submitted_frames = 0;
+	uint64_t decoded_outputs = 0;
+	uint64_t stalls_detected = 0;
+	uint64_t recovery_requests_sent = 0;
+	uint64_t recovery_requests_suppressed = 0;
+	uint64_t async_codec_errors = 0;
+	uint64_t input_submission_failures = 0;
+	uint64_t input_buffer_overflows = 0;
+	uint64_t output_release_failures = 0;
+	uint64_t image_output_failures = 0;
+	uint64_t flush_attempts = 0;
+	uint64_t flush_successes = 0;
+	uint64_t flush_failures = 0;
+	uint64_t successful_recoveries = 0;
+	uint64_t latency_samples = 0;
+	uint64_t latency_total_us = 0;
+	uint64_t latency_last_us = 0;
+	uint64_t latency_max_us = 0;
 };
 
 std::mutex helix_health_map_mutex;
@@ -129,10 +166,63 @@ std::shared_ptr<helix_decoder_health> helix_health(wivrn::android::decoder * dec
 	return state;
 }
 
-void helix_remove_health(wivrn::android::decoder * decoder)
+void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index)
 {
-	std::scoped_lock lock(helix_health_map_mutex);
-	helix_health_map.erase(decoder);
+	std::shared_ptr<helix_decoder_health> state;
+	{
+		std::scoped_lock lock(helix_health_map_mutex);
+		auto it = helix_health_map.find(decoder);
+		if (it == helix_health_map.end())
+			return;
+		state = std::move(it->second);
+		helix_health_map.erase(it);
+	}
+
+	std::scoped_lock lock(state->mutex);
+	uint64_t latency_average_us = state->latency_samples ? state->latency_total_us / state->latency_samples : 0;
+	spdlog::info(
+	        "Helix decoder summary stream {}: submitted={} decoded={} stalls={} recovery_sent={} recovery_suppressed={} recoveries={} flush={}/{}/{} latency_avg={}us latency_max={}us errors(async/input/overflow/output/image)={}/{}/{}/{}/{}",
+	        stream_index,
+	        state->submitted_frames,
+	        state->decoded_outputs,
+	        state->stalls_detected,
+	        state->recovery_requests_sent,
+	        state->recovery_requests_suppressed,
+	        state->successful_recoveries,
+	        state->flush_attempts,
+	        state->flush_successes,
+	        state->flush_failures,
+	        latency_average_us,
+	        state->latency_max_us,
+	        state->async_codec_errors,
+	        state->input_submission_failures,
+	        state->input_buffer_overflows,
+	        state->output_release_failures,
+	        state->image_output_failures);
+}
+
+void helix_note_failure(wivrn::android::decoder * decoder, helix_decoder_failure failure)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	switch (failure)
+	{
+		case helix_decoder_failure::input_buffer_overflow:
+			state->input_buffer_overflows++;
+			break;
+		case helix_decoder_failure::input_submission:
+			state->input_submission_failures++;
+			break;
+		case helix_decoder_failure::async_codec:
+			state->async_codec_errors++;
+			break;
+		case helix_decoder_failure::output_release:
+			state->output_release_failures++;
+			break;
+		case helix_decoder_failure::image_output:
+			state->image_output_failures++;
+			break;
+	}
 }
 
 uint64_t helix_codec_generation(wivrn::android::decoder * decoder)
@@ -149,19 +239,46 @@ bool helix_codec_generation_matches(wivrn::android::decoder * decoder, uint64_t 
 	return state->codec_generation == generation;
 }
 
-void helix_note_decoded(wivrn::android::decoder * decoder, uint64_t frame_index)
+void helix_note_decoded(wivrn::android::decoder * decoder, uint8_t stream_index, uint64_t frame_index)
 {
 	auto state = helix_health(decoder);
-	std::scoped_lock lock(state->mutex);
-	if (!state->last_decoded_frame || frame_index > *state->last_decoded_frame)
-		state->last_decoded_frame = frame_index;
-	if (state->recovery_pending && frame_index > state->last_recovery_request_frame)
+	bool recovered = false;
+	std::optional<uint64_t> recovery_duration_us;
 	{
-		spdlog::info("Helix decoder output resumed at frame {}", frame_index);
-		state->recovery_pending = false;
-		state->recovery_requests = 0;
-		state->flush_attempted = false;
+		std::scoped_lock lock(state->mutex);
+		auto now = helix_clock::now();
+		state->decoded_outputs++;
+
+		if (auto it = state->submitted_at.find(frame_index); it != state->submitted_at.end())
+		{
+			auto latency_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - it->second).count());
+			state->latency_last_us = latency_us;
+			state->latency_max_us = std::max(state->latency_max_us, latency_us);
+			state->latency_total_us += latency_us;
+			state->latency_samples++;
+			state->submitted_at.erase(it);
+		}
+
+		if (!state->last_decoded_frame || frame_index > *state->last_decoded_frame)
+			state->last_decoded_frame = frame_index;
+		if (state->recovery_pending && frame_index > state->last_recovery_request_frame)
+		{
+			if (state->recovery_started_at)
+				recovery_duration_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - *state->recovery_started_at).count());
+			state->successful_recoveries++;
+			state->recovery_pending = false;
+			state->recovery_requests = 0;
+			state->flush_attempted = false;
+			state->stall_active = false;
+			state->recovery_started_at.reset();
+			recovered = true;
+		}
 	}
+
+	if (recovered && recovery_duration_us)
+		spdlog::info("Helix decoder output resumed on stream {} at frame {} after {} us", stream_index, frame_index, *recovery_duration_us);
+	else if (recovered)
+		spdlog::info("Helix decoder output resumed on stream {} at frame {}", stream_index, frame_index);
 }
 
 void helix_request_recovery(
@@ -185,7 +302,11 @@ void helix_request_recovery(
 		// If output remains stalled, permit another IDR request after eight more
 		// submitted frames. This bounds recovery latency without creating an IDR storm.
 		if (state->recovery_pending && frame_index <= state->last_recovery_request_frame + 8)
+		{
+			state->recovery_requests_suppressed++;
+			spdlog::debug("Helix suppressed duplicate recovery request on stream {} at frame {}", stream_index, frame_index);
 			return;
+		}
 
 		recovery_feedback = *state->last_complete_feedback;
 		recovery_feedback->frame_index = frame_index;
@@ -199,7 +320,15 @@ void helix_request_recovery(
 
 	spdlog::warn("Helix requesting IDR for stream {} at frame {}: {}", stream_index, recovery_feedback->frame_index, reason);
 	if (auto scene = weak_scene.lock())
+	{
+		{
+			std::scoped_lock lock(state->mutex);
+			state->recovery_requests_sent++;
+			if (!state->recovery_started_at)
+				state->recovery_started_at = helix_clock::now();
+		}
 		scene->send_feedback(*recovery_feedback);
+	}
 }
 
 bool helix_should_flush(wivrn::android::decoder * decoder)
@@ -210,6 +339,7 @@ bool helix_should_flush(wivrn::android::decoder * decoder)
 		return false;
 
 	state->flush_attempted = true;
+	state->flush_attempts++;
 	return true;
 }
 
@@ -220,12 +350,24 @@ void helix_begin_flush(wivrn::android::decoder * decoder)
 	state->codec_generation++;
 }
 
+void helix_note_flush_result(wivrn::android::decoder * decoder, bool success)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	if (success)
+		state->flush_successes++;
+	else
+		state->flush_failures++;
+}
+
 void helix_reset_after_flush(wivrn::android::decoder * decoder)
 {
 	auto state = helix_health(decoder);
 	std::scoped_lock lock(state->mutex);
 	state->first_submitted_frame.reset();
 	state->last_decoded_frame.reset();
+	state->submitted_at.clear();
+	state->submit_order.clear();
 	state->recovery_pending = false;
 	state->recovery_requests = 0;
 }
@@ -238,13 +380,23 @@ void helix_note_submitted(
 {
 	auto state = helix_health(decoder);
 	bool stalled = false;
+	bool new_stall = false;
+	uint64_t outstanding_frames = 0;
 	{
 		std::scoped_lock lock(state->mutex);
+		state->submitted_frames++;
 		state->last_complete_feedback = feedback;
+		state->submitted_at[feedback.frame_index] = helix_clock::now();
+		state->submit_order.push_back(feedback.frame_index);
+		while (state->submit_order.size() > helix_submit_history_limit)
+		{
+			state->submitted_at.erase(state->submit_order.front());
+			state->submit_order.pop_front();
+		}
+
 		if (!state->first_submitted_frame)
 			state->first_submitted_frame = feedback.frame_index;
 
-		uint64_t outstanding_frames = 0;
 		if (state->last_decoded_frame)
 		{
 			if (feedback.frame_index > *state->last_decoded_frame)
@@ -255,8 +407,16 @@ void helix_note_submitted(
 			outstanding_frames = feedback.frame_index - *state->first_submitted_frame + 1;
 		}
 		stalled = outstanding_frames > 4;
+		if (stalled && !state->stall_active)
+		{
+			state->stall_active = true;
+			state->stalls_detected++;
+			new_stall = true;
+		}
 	}
 
+	if (new_stall)
+		spdlog::warn("Helix decoder output stall detected on stream {} with {} frames outstanding", stream_index, outstanding_frames);
 	if (stalled)
 		helix_request_recovery(decoder, weak_scene, stream_index, "decoder output stalled", feedback.frame_index);
 }
@@ -374,7 +534,7 @@ decoder::~decoder()
 	if (worker.joinable())
 		worker.join();
 
-	helix_remove_health(this);
+	helix_remove_health(this, stream_index);
 	spdlog::info("decoder::~decoder");
 }
 
@@ -394,6 +554,7 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 		if (current_input_buffer.data_size + sub_data.size() > current_input_buffer.capacity)
 		{
 			spdlog::error("data to decode is larger than decoder buffer, skipping frame");
+			helix_note_failure(this, helix_decoder_failure::input_buffer_overflow);
 			helix_request_recovery(this, weak_scene, stream_index, "decoder input buffer overflow", frame_index);
 			return;
 		}
@@ -413,6 +574,7 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 			spdlog::error("AMediaCodec_queueInputBuffer: MediaCodec error {}({})",
 			              int(status),
 			              std::string(magic_enum::enum_name(status)).c_str());
+			helix_note_failure(this, helix_decoder_failure::input_submission);
 			helix_request_recovery(this, weak_scene, stream_index, "MediaCodec input submission failed", frame_index);
 		}
 		return false;
@@ -465,6 +627,7 @@ void decoder::frame_completed(const wivrn::from_headset::feedback & feedback, co
 		});
 
 		auto status = future.get();
+		helix_note_flush_result(this, status == AMEDIA_OK);
 		if (status == AMEDIA_OK)
 		{
 			helix_reset_after_flush(this);
@@ -520,7 +683,7 @@ void decoder::on_image_available(AImageReader * reader)
 		}
 
 		assert(info->feedback.frame_index == frame_index);
-		helix_note_decoded(this, frame_index);
+		helix_note_decoded(this, stream_index, frame_index);
 
 		auto vk_data = map_hardware_buffer(image.get());
 
@@ -541,11 +704,13 @@ void decoder::on_image_available(AImageReader * reader)
 	catch (const std::exception & e)
 	{
 		spdlog::warn("Helix image output failure on stream {}: {}", stream_index, e.what());
+		helix_note_failure(this, helix_decoder_failure::image_output);
 		helix_request_recovery(this, weak_scene, stream_index, "image output processing failed");
 	}
 	catch (...)
 	{
 		spdlog::warn("Helix unknown image output failure on stream {}", stream_index);
+		helix_note_failure(this, helix_decoder_failure::image_output);
 		helix_request_recovery(this, weak_scene, stream_index, "unknown image output processing failure");
 	}
 }
@@ -662,7 +827,7 @@ std::shared_ptr<decoder::mapped_hardware_buffer> decoder::map_hardware_buffer(AI
 	                .initialLayout = vk::ImageLayout::eUndefined,
 	        },
 	        vk::ExternalMemoryImageCreateInfo{
-	                .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eAndroidHardwareBufferANDROID,
+	                .handleTypes = vk::ExternalMemoryHandleTypeBits::eAndroidHardwareBufferANDROID,
 	        },
 	        vk::ExternalFormatANDROID{
 	                .externalFormat = format_properties.externalFormat,
@@ -728,6 +893,7 @@ void decoder::on_media_error(AMediaCodec *, void * userdata, media_status_t erro
 {
 	auto self = (decoder *)userdata;
 	spdlog::warn("Mediacodec error {} action {}: {}", int(error), actionCode, detail ? detail : "unknown");
+	helix_note_failure(self, helix_decoder_failure::async_codec);
 	helix_request_recovery(self, self->weak_scene, self->stream_index, "MediaCodec asynchronous error");
 }
 void decoder::on_media_format_changed(AMediaCodec *, void * userdata, AMediaFormat *)
@@ -762,6 +928,7 @@ void decoder::on_media_output_available(AMediaCodec * media_codec, void * userda
 			spdlog::error("AMediaCodec_releaseOutputBuffer: MediaCodec error {}({})",
 			              int(status),
 			              std::string(magic_enum::enum_name(status)).c_str());
+			helix_note_failure(self, helix_decoder_failure::output_release);
 			helix_request_recovery(self, self->weak_scene, self->stream_index, "MediaCodec output release failed");
 		}
 		return false;

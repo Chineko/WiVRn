@@ -785,7 +785,6 @@ void decoder::create_sampler(const AHardwareBuffer_Desc & buffer_desc, vk::Andro
 	        },
 	};
 
-	ycbcr_sampler = vk::raii::SamplerYcbcrConversion(device, ycbcr_create_info.get<vk::SamplerYcbcrConversionCreateInfo>());
 	ycbcr_sampler = vk::raii::Sampler(device, sampler_info.get());
 }
 

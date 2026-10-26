@@ -405,7 +405,7 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 	if (partial)
 		return;
 
-	jobs.push([=, idx = current_input_buffer.idx, data_size = current_input_buffer.data_size, mc = media_codec.get()]() {
+	jobs.push([=, this, idx = current_input_buffer.idx, data_size = current_input_buffer.data_size, mc = media_codec.get()]() {
 		uint64_t timestamp = frame_index * 10'000;
 		auto status = AMediaCodec_queueInputBuffer(mc, idx, 0, data_size, timestamp, 0);
 		if (status != AMEDIA_OK)

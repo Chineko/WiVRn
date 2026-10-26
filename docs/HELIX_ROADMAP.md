@@ -31,10 +31,10 @@ Primary development branch:
 
 Suggested feature branches:
 
-- `helix/decoder-recovery`
-- `helix/pacing`
-- `helix/retransmission`
-- `helix/fec`
+- `helix-decoder-recovery`
+- `helix-pacing`
+- `helix-retransmission`
+- `helix-fec`
 
 Upstream WiVRn should remain the canonical source for rebases/merges so unrelated local modifications do not enter Helix accidentally.
 
@@ -117,18 +117,38 @@ An IDR is not considered successful simply because it reached MediaCodec.
 
 Recovery is complete only after decoded output from the new prediction chain is observed.
 
-## Telemetry
+## Telemetry is part of 0.1
 
-Track:
+Telemetry is not deferred to a later milestone. Add enough measurement before adding more recovery complexity so we can distinguish whether IDR and flush already solve most decoder failures.
 
+Track at minimum:
+
+- frames submitted to MediaCodec
+- decoded outputs observed
+- submit-to-output latency
+- decoder stall detections
 - IDRs requested
-- IDRs delivered
-- IDRs successfully decoded
-- decoder stalls
-- decoder flushes
-- decoder recreations
+- output resumed after recovery
+- decoder flush attempts and results
+- decoder recreation attempts and results
 - recovery duration
 - recovery reason
+
+## Decoder recreation is its own validation slice
+
+Full MediaCodec recreation should be implemented only after IDR + flush behavior is build-validated and device-tested.
+
+Recreation must explicitly handle vendor-sensitive Android decoder lifecycle concerns, including:
+
+- output surface / AImageReader ownership
+- stale codec callbacks
+- stale input and output buffer indices
+- hardware-buffer lifetime
+- sampler / Vulkan resource lifetime
+- cleanup ordering
+- avoiding leaks, deadlocks, or repeated reset loops
+
+Treat Qualcomm, MediaTek, and other vendor implementations as potentially different until measured on-device.
 
 ### Success criterion
 
@@ -218,30 +238,36 @@ Each frame tracks:
 - shard reception
 - first packet arrival
 - expected shard count
-- decode deadline
+- local decode deadline
 - completeness
 
-## Short reorder grace period
+## Adaptive short reorder grace period
 
-Initial target:
+Do not hard-code a fixed 1 ms reorder window as the final behavior.
 
-`~1 ms`
-
-Possible adaptive range:
+Initial experimental range:
 
 `1–3 ms`
 
-This must remain much smaller than a conventional jitter buffer.
+The receiver should measure actual packet reordering/jitter and choose the shortest grace period that avoids discarding packets that are merely slightly out of order.
+
+This must remain much smaller than a conventional video jitter buffer.
 
 ## Packet sequence numbers
 
 Add globally monotonic video-packet sequence numbers so the receiver can identify exactly which shard disappeared.
 
+## Local monotonic timing
+
+Timeouts, reorder grace periods, queue age, and retransmission deadlines should use receiver-local monotonic time wherever possible.
+
+Do not assume host and headset clocks are directly comparable. Cross-device absolute deadlines should only be introduced if Helix later adds an explicit clock-synchronization model.
+
 ## Deadline-aware retransmission
 
 If:
 
-`estimated RTT + safety margin < remaining frame deadline`
+`estimated RTT + safety margin < remaining local frame deadline`
 
 request the missing shard.
 
@@ -291,6 +317,8 @@ Increase parity for random loss.
 
 Do not increase parity when telemetry indicates congestion; reduce bitrate first.
 
+RTX remains earlier in the roadmap because very low-RTT clean LANs may recover isolated losses more cheaply with selective retransmission, while FEC becomes increasingly valuable when measured loss is bursty or retransmission frequently misses deadlines.
+
 ---
 
 # Helix 0.5 — Recovery-frame protection
@@ -304,9 +332,11 @@ Possible mechanisms:
 - higher FEC ratio for IDRs
 - higher scheduling priority
 - limited duplication of critical shards
-- temporarily reduced IDR size
+- temporarily reduced IDR size / recovery quality
 - dedicated pacing behavior
 - selective retransmission for missing IDR shards
+
+A temporarily softer recovery frame is preferable to a very large IDR that creates a new microburst and immediately loses packets again.
 
 Helix must explicitly avoid this failure loop:
 
@@ -368,7 +398,7 @@ Prefer:
 
 # Helix telemetry
 
-Telemetry should be added from the beginning and expanded throughout development.
+Telemetry starts in 0.1 and expands throughout development.
 
 ## Network metrics
 
@@ -396,13 +426,18 @@ Telemetry should be added from the beginning and expanded throughout development
 
 ## Decoder metrics
 
+- frames submitted
+- decoded frames produced
 - decoder submission latency
-- decode latency
+- submit-to-output latency
 - output stalls
 - decoder errors
 - decoder flush count
+- decoder flush success/failure
 - decoder recreation count
+- decoder recreation success/failure
 - recovery duration
+- recovery reason
 
 ## Congestion metrics
 
@@ -446,7 +481,7 @@ Client:
 
 ↓
 
-`Short Reorder Window`
+`Adaptive Short Reorder Window`
 
 ↓
 
@@ -486,7 +521,7 @@ Parallel decoder recovery path:
 
 ↓
 
-`Verify decoded IDR`
+`Verify decoded output resumed`
 
 ↓ failure
 
@@ -494,7 +529,7 @@ Parallel decoder recovery path:
 
 ↓ failure
 
-`Recreate Decoder`
+`Vendor-safe Recreate Decoder`
 
 ↓
 
@@ -502,36 +537,19 @@ Parallel decoder recovery path:
 
 ---
 
-# Proposed source layout
+# Source-layout policy
 
-Where practical, Helix-specific systems should remain modular rather than being scattered throughout the existing WiVRn code.
+Helix should remain logically modular, but physical directories should follow WiVRn's existing build system and source conventions until a separate layout clearly reduces complexity.
 
-Possible layout:
+Do not create `common/helix`, `server/helix`, or `client/helix` merely for architectural neatness if doing so creates unnecessary CMake/build-system work.
 
-`common/helix/`
+Preferred approach:
 
-- recovery
-- telemetry
-- protocol extensions
-- shared network state
+- keep each mechanism conceptually isolated
+- place code beside the WiVRn subsystem it extends
+- extract dedicated Helix modules only once the interface is stable and the extraction provides measurable maintenance value
 
-`server/helix/`
-
-- packet pacer
-- congestion controller
-- recovery controller
-- FEC encoder
-- retransmission cache
-
-`client/helix/`
-
-- decoder health
-- receive window
-- retransmission controller
-- FEC decoder
-- recovery controller
-
-Existing WiVRn systems should be reused where that keeps implementation simpler.
+A clean diff and easy upstream synchronization matter more than an idealized directory tree.
 
 ---
 
@@ -543,9 +561,11 @@ Decoder reliability:
 
 - decoder watchdog
 - decoder error recovery
-- IDR output verification
-- decoder flush/recreation
+- frame-aware IDR recovery signal
+- decoded-output recovery verification
 - recovery telemetry
+- decoder flush escalation
+- vendor-safe decoder recreation as a separate validated slice
 
 ## Helix 0.2
 
@@ -561,7 +581,8 @@ Congestion prevention:
 Fast packet recovery:
 
 - packet sequence numbers
-- reorder window
+- adaptive 1–3 ms reorder window
+- receiver-local monotonic deadlines
 - deadline-aware retransmission
 
 ## Helix 0.4
@@ -570,7 +591,7 @@ Packet-loss resilience:
 
 - Reed-Solomon FEC
 - unequal frame protection
-- adaptive FEC
+- adaptive FEC informed by measured loss patterns
 
 ## Helix 0.5
 
@@ -578,6 +599,7 @@ Recovery hardening:
 
 - protected IDRs
 - optimized recovery pacing
+- smaller recovery IDRs when useful
 - IDR retransmission policy
 - recovery-loop prevention
 
@@ -595,7 +617,7 @@ Integrated adaptation:
 
 1. **Freshness beats completeness.** A late perfect frame is often worse in VR than dropping it and continuing with a fresh frame.
 
-2. **Use the cheapest recovery mechanism first.** Preferred order: reordering correction → FEC → selective retransmission → frame drop → IDR → decoder flush → decoder recreation.
+2. **Use the cheapest recovery mechanism first.** Preferred order: reordering correction → FEC/RTX according to deadline and measured loss → frame drop → IDR → decoder flush → decoder recreation.
 
 3. **Never allow recovery traffic to worsen congestion.**
 
@@ -607,7 +629,11 @@ Integrated adaptation:
 
 7. **Keep latency bounded at every queue.**
 
-8. **Measure before optimizing.** Helix should expose enough telemetry to explain why a frame failed and which recovery mechanism repaired it.
+8. **Use local monotonic clocks for local deadlines unless explicit clock synchronization exists.**
+
+9. **Measure before optimizing.** Helix should expose enough telemetry to explain why a frame failed and which recovery mechanism repaired it.
+
+10. **Follow WiVRn's existing source/build structure until a Helix-specific extraction is justified by evidence.**
 
 ---
 
@@ -622,11 +648,22 @@ Primary systems to modify or inspect:
 - `from_headset::feedback`
 - `default_idr_handler`
 - stream feedback transport
-- decoder recreation lifecycle
+- decoder flush and recreation lifecycle
+- basic recovery telemetry
 
 First milestone:
 
 **WiVRn Helix 0.1 — Decoder Recovery**
+
+Validation order:
+
+1. build Android variants successfully
+2. verify normal streaming is unaffected
+3. induce or simulate decoder-output failure
+4. confirm IDR recovery request
+5. confirm flush occurs only after failed recovery
+6. confirm decoded output resumes after flush
+7. only then implement and validate full MediaCodec recreation
 
 Success criterion:
 

@@ -23,6 +23,7 @@
 #include "utils/named_thread.h"
 #include <android/hardware_buffer.h>
 #include <cassert>
+#include <future>
 #include <magic_enum.hpp>
 #include <media/NdkImage.h>
 #include <media/NdkImageReader.h>
@@ -110,7 +111,10 @@ struct helix_decoder_health
 	std::optional<uint64_t> first_submitted_frame;
 	std::optional<uint64_t> last_decoded_frame;
 	uint64_t last_recovery_request_frame = 0;
+	uint64_t codec_generation = 0;
+	unsigned recovery_requests = 0;
 	bool recovery_pending = false;
+	bool flush_attempted = false;
 };
 
 std::mutex helix_health_map_mutex;
@@ -131,6 +135,20 @@ void helix_remove_health(wivrn::android::decoder * decoder)
 	helix_health_map.erase(decoder);
 }
 
+uint64_t helix_codec_generation(wivrn::android::decoder * decoder)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	return state->codec_generation;
+}
+
+bool helix_codec_generation_matches(wivrn::android::decoder * decoder, uint64_t generation)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	return state->codec_generation == generation;
+}
+
 void helix_note_decoded(wivrn::android::decoder * decoder, uint64_t frame_index)
 {
 	auto state = helix_health(decoder);
@@ -141,6 +159,8 @@ void helix_note_decoded(wivrn::android::decoder * decoder, uint64_t frame_index)
 	{
 		spdlog::info("Helix decoder output resumed at frame {}", frame_index);
 		state->recovery_pending = false;
+		state->recovery_requests = 0;
+		state->flush_attempted = false;
 	}
 }
 
@@ -174,11 +194,40 @@ void helix_request_recovery(
 		recovery_feedback->blitted = 0;
 		state->recovery_pending = true;
 		state->last_recovery_request_frame = frame_index;
+		state->recovery_requests++;
 	}
 
 	spdlog::warn("Helix requesting IDR for stream {} at frame {}: {}", stream_index, recovery_feedback->frame_index, reason);
 	if (auto scene = weak_scene.lock())
 		scene->send_feedback(*recovery_feedback);
+}
+
+bool helix_should_flush(wivrn::android::decoder * decoder)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	if (!state->recovery_pending || state->recovery_requests < 2 || state->flush_attempted)
+		return false;
+
+	state->flush_attempted = true;
+	return true;
+}
+
+void helix_begin_flush(wivrn::android::decoder * decoder)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	state->codec_generation++;
+}
+
+void helix_reset_after_flush(wivrn::android::decoder * decoder)
+{
+	auto state = helix_health(decoder);
+	std::scoped_lock lock(state->mutex);
+	state->first_submitted_frame.reset();
+	state->last_decoded_frame.reset();
+	state->recovery_pending = false;
+	state->recovery_requests = 0;
 }
 
 void helix_note_submitted(
@@ -386,6 +435,50 @@ void decoder::frame_completed(const wivrn::from_headset::feedback & feedback, co
 	        .view_info = view_info,
 	});
 	helix_note_submitted(this, weak_scene, stream_index, feedback);
+
+	if (helix_should_flush(this))
+	{
+		spdlog::warn("Helix escalating decoder recovery to MediaCodec flush on stream {}", stream_index);
+
+		// Stop using any input buffer obtained before the flush. The network thread
+		// remains blocked on the future below until the serialized codec operation
+		// finishes, so it cannot queue another stale buffer in the meantime.
+		current_input_buffer = input_buffer{};
+
+		auto completion = std::make_shared<std::promise<media_status_t>>();
+		auto future = completion->get_future();
+		jobs.push([this, completion, mc = media_codec.get()]() {
+			helix_begin_flush(this);
+
+			auto status = AMediaCodec_flush(mc);
+			if (status == AMEDIA_OK)
+			{
+				// Flush revokes codec buffers. Remove stale callback bookkeeping before
+				// restarting async mode so newly delivered input buffers remain valid.
+				input_buffers.drop_until([](auto &) { return false; });
+				frame_infos.drop_until([](auto &) { return false; });
+				status = AMediaCodec_start(mc);
+			}
+
+			completion->set_value(status);
+			return false;
+		});
+
+		auto status = future.get();
+		if (status == AMEDIA_OK)
+		{
+			helix_reset_after_flush(this);
+			spdlog::info("Helix MediaCodec flush completed on stream {}", stream_index);
+			helix_request_recovery(this, weak_scene, stream_index, "decoder flushed; fresh IDR required", feedback.frame_index);
+		}
+		else
+		{
+			spdlog::error("Helix MediaCodec flush/restart failed on stream {}: {}({})",
+			              stream_index,
+			              int(status),
+			              std::string(magic_enum::enum_name(status)).c_str());
+		}
+	}
 }
 
 void decoder::on_image_available(void * context, AImageReader * reader)
@@ -655,7 +748,13 @@ void decoder::on_media_input_available(AMediaCodec * media_codec, void * userdat
 void decoder::on_media_output_available(AMediaCodec * media_codec, void * userdata, int32_t index, AMediaCodecBufferInfo * bufferInfo)
 {
 	auto self = (decoder *)userdata;
+	auto generation = helix_codec_generation(self);
 	self->jobs.push([=]() {
+		// A flush revokes outstanding codec buffers. Ignore any release job queued by
+		// an old-generation callback after the flush operation was already scheduled.
+		if (!helix_codec_generation_matches(self, generation))
+			return false;
+
 		auto status = AMediaCodec_releaseOutputBuffer(media_codec, index, true);
 		// will trigger on_image_available through ImageReader
 		if (status != AMEDIA_OK)

@@ -456,7 +456,33 @@ When uncertain between two paths, prefer the one that:
 
 This rule should be used whenever there is no strong reason to choose otherwise.
 
-## 32. End-of-session checkpoint
+## 32. Keep the next pipeline slice prepared
+
+Helix development should avoid idle gaps between validated slices.
+
+While the current slice is in CI, device testing, or another validation gate, prepare the next bounded slice in parallel whenever that preparation does not depend on unresolved results.
+
+Preparation may include:
+
+- creating a stacked prep branch
+- writing the implementation/test plan
+- identifying exact code hooks and dependencies
+- preparing telemetry or failure-injection strategy
+- reviewing relevant platform/API behavior
+- defining success and rollback criteria
+
+Rules:
+
+1. Never modify or expand the branch currently under validation merely to stay busy.
+2. Keep prep work isolated on a separate branch or documentation commit.
+3. Do not implement assumptions that depend on an unresolved validation result.
+4. Treat prepared work as provisional until its parent slice passes its gate.
+5. If the parent slice changes, rebase, recreate, or discard the prep branch rather than forcing stale assumptions forward.
+6. The goal is a continuously ready pipeline, not parallel scope creep.
+
+At any meaningful checkpoint, there should normally be one active slice under validation and one clearly scoped next slice ready to start.
+
+## 33. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -469,7 +495,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 33. The governing principle
+## 34. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

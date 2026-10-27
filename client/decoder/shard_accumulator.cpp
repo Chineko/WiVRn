@@ -113,16 +113,13 @@ static void debug_why_not_sent(const shard_set & shards)
 
 shard_accumulator::~shard_accumulator()
 {
-	if (reorder_grace_started_ > 0)
-	{
-		spdlog::info(
-		        "Helix reorder summary stream={} grace=2ms started={} recovered={} expired={} superseded={}",
-		        current.feedback.stream_index,
-		        reorder_grace_started_,
-		        reorder_grace_recovered_,
-		        reorder_grace_expired_,
-		        reorder_grace_superseded_);
-	}
+	spdlog::info(
+	        "Helix reorder summary stream={} grace=2ms started={} recovered={} expired={} superseded={}",
+	        current.feedback.stream_index,
+	        reorder_grace_started_,
+	        reorder_grace_recovered_,
+	        reorder_grace_expired_,
+	        reorder_grace_superseded_);
 }
 
 std::optional<XrTime> shard_accumulator::reorder_deadline() const

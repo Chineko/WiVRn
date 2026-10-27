@@ -19,7 +19,7 @@
 
 #include "android_decoder.h"
 #include "application.h"
-#include "helix_diagnostics.h"
+#include "../helix_diagnostics.h"
 #include "scenes/stream.h"
 #include "utils/named_thread.h"
 #include "version.h"

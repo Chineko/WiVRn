@@ -366,6 +366,7 @@ std::unique_ptr<video_encoder> video_encoder::create(
 				break;
 			case raw:
 				file += ".yuv";
+				break;
 		}
 		res->video_dump.open(file);
 	}

@@ -74,6 +74,11 @@ private:
 	shard_set next;
 	std::weak_ptr<scenes::stream> weak_scene;
 	xr::instance & instance;
+	std::optional<XrTime> reorder_deadline_;
+	uint64_t reorder_grace_started_ = 0;
+	uint64_t reorder_grace_recovered_ = 0;
+	uint64_t reorder_grace_expired_ = 0;
+	uint64_t reorder_grace_superseded_ = 0;
 
 public:
 	explicit shard_accumulator(
@@ -93,7 +98,11 @@ public:
 		next.reset(1);
 	}
 
+	~shard_accumulator();
+
 	void push_shard(wivrn::to_headset::video_stream_data_shard &&);
+	std::optional<XrTime> reorder_deadline() const;
+	void expire_reorder_grace(XrTime now);
 
 	vk::Sampler sampler()
 	{

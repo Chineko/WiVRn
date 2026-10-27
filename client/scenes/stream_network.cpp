@@ -35,7 +35,36 @@ void scenes::stream::process_packets()
 	{
 		try
 		{
-			network_session->poll(*this, std::chrono::milliseconds(500));
+			auto poll_timeout = std::chrono::milliseconds(500);
+			{
+				std::shared_lock lock(decoder_mutex);
+				XrTime now = instance.now();
+				for (auto & decoder: decoders)
+				{
+					if (not decoder.decoder)
+						continue;
+					auto deadline = decoder.decoder->reorder_deadline();
+					if (not deadline)
+						continue;
+
+					auto remaining_ns = *deadline - now;
+					auto deadline_timeout = remaining_ns <= 0
+					                                ? std::chrono::milliseconds(0)
+					                                : std::chrono::milliseconds((remaining_ns + 999'999) / 1'000'000);
+					if (deadline_timeout < poll_timeout)
+						poll_timeout = deadline_timeout;
+				}
+			}
+
+			network_session->poll(*this, poll_timeout);
+
+			{
+				std::shared_lock lock(decoder_mutex);
+				XrTime now = instance.now();
+				for (auto & decoder: decoders)
+					if (decoder.decoder)
+						decoder.decoder->expire_reorder_grace(now);
+			}
 		}
 		catch (std::exception & e)
 		{

@@ -539,7 +539,24 @@ Prefer WiVRn's existing dependency path when it provides the required functional
 
 A local header compiling successfully is not proof of dependency compatibility. Dependency and ABI assumptions must be verified before local build or runtime testing.
 
-## 36. End-of-session checkpoint
+## 36. Match local commands to the user's active shell
+
+Before giving local terminal commands, identify and respect the shell the user is actually running.
+
+For this project, the user's normal interactive shell is fish. Commands intended to be pasted directly into that shell must use fish-compatible syntax.
+
+Rules:
+
+1. Do not give Bash-only syntax such as here-documents, Bash parameter expansion, Bash arrays, or `source` assumptions as if it were directly pasteable into fish.
+2. If Bash syntax is genuinely useful or required, wrap it explicitly with `bash -c '...'` and say that Bash is being invoked intentionally.
+3. Prefer shell-neutral commands when they are simple and equally safe.
+4. When providing multi-line editing or scripting commands for fish, use a fish-compatible form such as `python -c`, a temporary script file, or an explicitly invoked Bash command.
+5. Treat a shell-syntax failure as a process error: correct the command method before continuing with build or test steps.
+6. Do not assume shell compatibility merely because a command works in a generic Linux example.
+
+Local instructions are part of the validation chain. A correct code change paired with commands that cannot run in the user's shell is not a complete development step.
+
+## 37. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -552,7 +569,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 37. The governing principle
+## 38. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

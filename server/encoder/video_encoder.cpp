@@ -24,12 +24,12 @@
 
 #include "encoder_settings.h"
 #include "os/os_time.h"
+#include "util/u_logging.h"
 #include "utils/wivrn_trace.h"
 #include "wivrn_config.h"
 
 #include <array>
 #include <chrono>
-#include <spdlog/spdlog.h>
 #include <string>
 #include <unordered_map>
 
@@ -129,7 +129,7 @@ void helix_note_sender_queue_delay(video_encoder * encoder, uint64_t queue_delay
 		stats.sender_queue_delay_hist[helix_queue_delay_bucket(queue_delay_us)]++;
 	}
 	if (queue_delay_us >= 5'000)
-		spdlog::warn("Helix pacing sender queue delay stream={} delay={}us", encoder->stream_idx, queue_delay_us);
+		U_LOG_W("Helix pacing sender queue delay stream=%u delay=%lluus", encoder->stream_idx, static_cast<unsigned long long>(queue_delay_us));
 }
 
 void helix_note_frame_gap(video_encoder * encoder, uint64_t frame_index, uint64_t gap_us)
@@ -144,7 +144,7 @@ void helix_note_frame_gap(video_encoder * encoder, uint64_t frame_index, uint64_
 		stats.inter_frame_gap_max_us = std::max(stats.inter_frame_gap_max_us, gap_us);
 	}
 	if (gap_us >= 40'000)
-		spdlog::warn("Helix pacing frame gap stream={} frame={} gap={}us", encoder->stream_idx, frame_index, gap_us);
+		U_LOG_W("Helix pacing frame gap stream=%u frame=%llu gap=%lluus", encoder->stream_idx, static_cast<unsigned long long>(frame_index), static_cast<unsigned long long>(gap_us));
 }
 
 void helix_note_frame_sent(video_encoder * encoder, uint64_t frame_index, uint64_t bytes, uint64_t shards, uint64_t send_span_us)
@@ -164,9 +164,14 @@ void helix_note_frame_sent(video_encoder * encoder, uint64_t frame_index, uint64
 		stats.send_span_hist[helix_send_span_bucket(send_span_us)]++;
 	}
 	if (send_span_us >= 4'000)
-		spdlog::warn(
-		        "Helix pacing slow send stream={} frame={} payload={}B shards={} span={}us payload_rate={}kbps",
-		        encoder->stream_idx, frame_index, bytes, shards, send_span_us, payload_rate_kbps);
+		U_LOG_W(
+		        "Helix pacing slow send stream=%u frame=%llu payload=%lluB shards=%llu span=%lluus payload_rate=%llukbps",
+		        encoder->stream_idx,
+		        static_cast<unsigned long long>(frame_index),
+		        static_cast<unsigned long long>(bytes),
+		        static_cast<unsigned long long>(shards),
+		        static_cast<unsigned long long>(send_span_us),
+		        static_cast<unsigned long long>(payload_rate_kbps));
 }
 
 void helix_log_pacing_summary(video_encoder * encoder)
@@ -187,28 +192,38 @@ void helix_log_pacing_summary(video_encoder * encoder)
 	uint64_t queue_delay_avg_us = stats.sender_queue_delay_samples ? stats.sender_queue_delay_total_us / stats.sender_queue_delay_samples : 0;
 	uint64_t inter_frame_gap_avg_us = stats.inter_frame_gap_samples ? stats.inter_frame_gap_total_us / stats.inter_frame_gap_samples : 0;
 
-	spdlog::info(
-	        "Helix pacing baseline stream {}: version={} frames={} payload_bytes={} shards={} frame_bytes(avg/max)={}/{} frame_shards(avg/max)={}/{} send_span(avg/max)={}/{}us payload_rate_max={}kbps sender_queue(events/depth_max)={}/{} sender_queue_delay(avg/max)={}/{}us inter_frame_gap(avg/max)={}/{}us hist_send_span(<0.25/0.5/1/2/4/>4ms)={}/{}/{}/{}/{}/{} hist_queue_delay(<0.1/0.5/1/2/5/>5ms)={}/{}/{}/{}/{}/{}",
+	U_LOG_I(
+	        "Helix pacing baseline stream %u: version=%s frames=%llu payload_bytes=%llu shards=%llu frame_bytes(avg/max)=%llu/%llu frame_shards(avg/max)=%llu/%llu send_span(avg/max)=%llu/%lluus payload_rate_max=%llukbps sender_queue(events/depth_max)=%llu/%llu sender_queue_delay(avg/max)=%llu/%lluus inter_frame_gap(avg/max)=%llu/%lluus hist_send_span(<0.25/0.5/1/2/4/>4ms)=%llu/%llu/%llu/%llu/%llu/%llu hist_queue_delay(<0.1/0.5/1/2/5/>5ms)=%llu/%llu/%llu/%llu/%llu/%llu",
 	        encoder->stream_idx,
 	        helix_pacing_telemetry_version,
-	        stats.frames,
-	        stats.payload_bytes,
-	        stats.shards,
-	        frame_bytes_avg,
-	        stats.frame_bytes_max,
-	        frame_shards_avg,
-	        stats.frame_shards_max,
-	        send_span_avg_us,
-	        stats.send_span_max_us,
-	        stats.payload_rate_max_kbps,
-	        stats.enqueue_events,
-	        stats.sender_queue_depth_max,
-	        queue_delay_avg_us,
-	        stats.sender_queue_delay_max_us,
-	        inter_frame_gap_avg_us,
-	        stats.inter_frame_gap_max_us,
-	        stats.send_span_hist[0], stats.send_span_hist[1], stats.send_span_hist[2], stats.send_span_hist[3], stats.send_span_hist[4], stats.send_span_hist[5],
-	        stats.sender_queue_delay_hist[0], stats.sender_queue_delay_hist[1], stats.sender_queue_delay_hist[2], stats.sender_queue_delay_hist[3], stats.sender_queue_delay_hist[4], stats.sender_queue_delay_hist[5]);
+	        static_cast<unsigned long long>(stats.frames),
+	        static_cast<unsigned long long>(stats.payload_bytes),
+	        static_cast<unsigned long long>(stats.shards),
+	        static_cast<unsigned long long>(frame_bytes_avg),
+	        static_cast<unsigned long long>(stats.frame_bytes_max),
+	        static_cast<unsigned long long>(frame_shards_avg),
+	        static_cast<unsigned long long>(stats.frame_shards_max),
+	        static_cast<unsigned long long>(send_span_avg_us),
+	        static_cast<unsigned long long>(stats.send_span_max_us),
+	        static_cast<unsigned long long>(stats.payload_rate_max_kbps),
+	        static_cast<unsigned long long>(stats.enqueue_events),
+	        static_cast<unsigned long long>(stats.sender_queue_depth_max),
+	        static_cast<unsigned long long>(queue_delay_avg_us),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_max_us),
+	        static_cast<unsigned long long>(inter_frame_gap_avg_us),
+	        static_cast<unsigned long long>(stats.inter_frame_gap_max_us),
+	        static_cast<unsigned long long>(stats.send_span_hist[0]),
+	        static_cast<unsigned long long>(stats.send_span_hist[1]),
+	        static_cast<unsigned long long>(stats.send_span_hist[2]),
+	        static_cast<unsigned long long>(stats.send_span_hist[3]),
+	        static_cast<unsigned long long>(stats.send_span_hist[4]),
+	        static_cast<unsigned long long>(stats.send_span_hist[5]),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_hist[0]),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_hist[1]),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_hist[2]),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_hist[3]),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_hist[4]),
+	        static_cast<unsigned long long>(stats.sender_queue_delay_hist[5]));
 }
 } // namespace
 
@@ -351,7 +366,6 @@ std::unique_ptr<video_encoder> video_encoder::create(
 				break;
 			case raw:
 				file += ".yuv";
-				break;
 		}
 		res->video_dump.open(file);
 	}
@@ -376,7 +390,7 @@ video_encoder::video_encoder(vk_bundle & vk,
         }
 {
 	assert(this->idr);
-	spdlog::info("Helix pacing telemetry {} stream={}", helix_pacing_telemetry_version, stream_idx);
+	U_LOG_I("Helix pacing telemetry %s stream=%u", helix_pacing_telemetry_version, stream_idx);
 }
 
 video_encoder::~video_encoder()

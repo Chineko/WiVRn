@@ -30,6 +30,11 @@ using namespace wivrn::to_headset;
 using shard_set = shard_accumulator::shard_set;
 using data_shard = shard_accumulator::data_shard;
 
+namespace
+{
+constexpr XrDuration helix_reorder_grace_ns = 2'000'000;
+}
+
 shard_set::shard_set(uint8_t stream_index)
 {
 	feedback.stream_index = stream_index;
@@ -106,10 +111,47 @@ static void debug_why_not_sent(const shard_set & shards)
 	spdlog::info("frame {} was not sent with {} data shards, {}{} missing", frame_idx, data, end ? "" : "at least ", missing);
 }
 
+shard_accumulator::~shard_accumulator()
+{
+	if (reorder_grace_started_ > 0)
+	{
+		spdlog::info(
+		        "Helix reorder summary stream={} grace=2ms started={} recovered={} expired={} superseded={}",
+		        current.feedback.stream_index,
+		        reorder_grace_started_,
+		        reorder_grace_recovered_,
+		        reorder_grace_expired_,
+		        reorder_grace_superseded_);
+	}
+}
+
+std::optional<XrTime> shard_accumulator::reorder_deadline() const
+{
+	return reorder_deadline_;
+}
+
 void shard_accumulator::advance()
 {
+	reorder_deadline_.reset();
 	std::swap(current, next);
 	next.reset(current.frame_index() + 1);
+}
+
+void shard_accumulator::expire_reorder_grace(XrTime now)
+{
+	if (not reorder_deadline_ or now < *reorder_deadline_)
+		return;
+
+	reorder_deadline_.reset();
+	++reorder_grace_expired_;
+
+	debug_why_not_sent(current);
+	send_feedback(current.feedback);
+
+	bool next_complete = is_complete(next);
+	advance();
+	if (next_complete)
+		try_submit_frame(0);
 }
 
 void shard_accumulator::push_shard(video_stream_data_shard && shard)
@@ -131,23 +173,28 @@ void shard_accumulator::push_shard(video_stream_data_shard && shard)
 	else if (frame_diff == 1)
 	{
 		next.insert(std::move(shard), instance);
-		if (is_complete(next))
+		if (is_complete(next) and not reorder_deadline_)
 		{
-			debug_why_not_sent(current);
-			send_feedback(current.feedback);
-
-			advance();
-
-			try_submit_frame(0);
+			reorder_deadline_ = instance.now() + helix_reorder_grace_ns;
+			++reorder_grace_started_;
 		}
 	}
 	else if (frame_diff == 2)
 	{
 		helix_diag::note_frame_jump(current.feedback.stream_index, 1);
+		if (reorder_deadline_)
+		{
+			reorder_deadline_.reset();
+			++reorder_grace_superseded_;
+		}
+
 		debug_why_not_sent(current);
 		send_feedback(current.feedback);
 
+		bool next_complete = is_complete(next);
 		advance();
+		if (next_complete)
+			try_submit_frame(0);
 
 		push_shard(std::move(shard));
 	}
@@ -155,6 +202,11 @@ void shard_accumulator::push_shard(video_stream_data_shard && shard)
 	{
 		// We have lost more than one frame
 		helix_diag::note_frame_jump(current.feedback.stream_index, frame_diff);
+		if (reorder_deadline_)
+		{
+			reorder_deadline_.reset();
+			++reorder_grace_superseded_;
+		}
 		send_feedback(current.feedback);
 		send_feedback(next.feedback);
 
@@ -197,6 +249,12 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	if (not frame_complete)
 		return;
 
+	if (reorder_deadline_)
+	{
+		reorder_deadline_.reset();
+		++reorder_grace_recovered_;
+	}
+
 	current.feedback.received_last_packet = instance.now();
 	current.feedback.sent_to_decoder = current.feedback.received_last_packet;
 	data_shard::timing_info_t timing_info = data_shards.back()->timing_info.value_or(data_shard::timing_info_t{});
@@ -222,7 +280,10 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 
 	send_feedback(current.feedback);
 
+	bool next_complete = is_complete(next);
 	advance();
+	if (next_complete)
+		try_submit_frame(0);
 }
 
 void shard_accumulator::send_feedback(wivrn::from_headset::feedback & feedback)

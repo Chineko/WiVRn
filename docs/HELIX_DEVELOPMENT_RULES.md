@@ -456,7 +456,90 @@ When uncertain between two paths, prefer the one that:
 
 This rule should be used whenever there is no strong reason to choose otherwise.
 
-## 32. End-of-session checkpoint
+## 32. Keep the next pipeline slice prepared
+
+Helix development should avoid idle gaps between validated slices.
+
+While the current slice is in CI, device testing, or another validation gate, prepare the next bounded slice in parallel whenever that preparation does not depend on unresolved results.
+
+Preparation may include:
+
+- creating a stacked prep branch
+- writing the implementation/test plan
+- identifying exact code hooks and dependencies
+- preparing telemetry or failure-injection strategy
+- reviewing relevant platform/API behavior
+- defining success and rollback criteria
+
+Rules:
+
+1. Never modify or expand the branch currently under validation merely to stay busy.
+2. Keep prep work isolated on a separate branch or documentation commit.
+3. Do not implement assumptions that depend on an unresolved validation result.
+4. Treat prepared work as provisional until its parent slice passes its gate.
+5. If the parent slice changes, rebase, recreate, or discard the prep branch rather than forcing stale assumptions forward.
+6. The goal is a continuously ready pipeline, not parallel scope creep.
+
+At any meaningful checkpoint, there should normally be one active slice under validation and one clearly scoped next slice ready to start.
+
+## 33. Quest runtime validation requires the matching desktop dashboard
+
+Quest testing is not complete with only the headset APK and `wivrn-server` binary.
+
+For any Quest runtime or pairing test:
+
+1. build the WiVRn server and desktop dashboard/client from the same Helix commit as the Quest APK
+2. use that matching desktop dashboard/client for pairing
+3. start the matching server through the normal desktop workflow unless the test explicitly targets server-only behavior
+4. verify the desktop and headset builds are protocol-compatible before diagnosing streaming or decoder behavior
+
+Do not treat the desktop dashboard as optional during Quest validation. A server-only build is insufficient for the normal pairing workflow and must not be presented as a complete Quest test setup.
+
+The standard Quest validation chain is:
+
+`matching commit -> server + desktop dashboard -> pairing -> Quest client -> stream -> telemetry`
+
+## 34. Verify the intended build exists before giving local build, install, or test instructions
+
+Before telling the user to pull, build, install, pair, launch, or test anything locally, first verify that the intended source change actually exists in the exact branch and commit that the local action is supposed to use.
+
+Do not assume that a discussed change has already been implemented, committed, pushed, built, or installed.
+
+Before issuing local-action commands, check the applicable state explicitly:
+
+1. confirm the intended code or documentation change has actually been implemented
+2. confirm it is committed on the expected branch when a commit is required
+3. confirm it is pushed when the user's next step depends on pulling or CI seeing it
+4. confirm the local build inputs should contain that commit before asking the user to rebuild
+5. confirm matching Quest and desktop artifacts are required and current before runtime validation
+6. distinguish clearly between "planned", "implemented locally", "committed", "pushed", "built", and "installed"
+
+If any prerequisite has not happened, complete or identify that prerequisite first. Never jump directly to local commands for a build that does not yet contain the intended change.
+
+This rule exists specifically to prevent wasted local rebuilds, installs, pairing work, and headset test sessions caused by stale or incomplete build inputs.
+
+## 35. Check dependency compatibility before introducing or using a dependency
+
+Before adding, including, linking, or otherwise relying on a library, logging framework, header-only dependency, generated component, build tool, SDK, or external helper in Helix, verify that it is compatible with the dependency versions and build configuration already used by WiVRn and the surrounding toolchain.
+
+Do not assume that a dependency is safe merely because its headers are available on the development machine or because another part of the system uses a similarly named library.
+
+Before using a dependency in a code slice, check as applicable:
+
+1. whether WiVRn already provides an existing API or wrapper that should be preferred
+2. the exact library and ABI version already linked by the affected target
+3. whether headers and linked binaries come from the same compatible version
+4. whether introducing the dependency changes transitive link requirements
+5. whether static/shared linking, compile definitions, or feature flags differ across Linux, Android, CI, Flatpak, Nix, or other supported build paths
+6. whether the dependency conflicts with another library in the chain, including bundled versus system copies
+7. whether a header-only use still emits symbols that require an additional linked library
+8. whether warning-as-error or compiler-version differences can expose compatibility problems on other targets
+
+Prefer WiVRn's existing dependency path when it provides the required functionality. Introduce a new dependency or alternate copy only when there is a clear need and its compatibility has been checked across the affected build targets.
+
+A local header compiling successfully is not proof of dependency compatibility. Dependency and ABI assumptions must be verified before local build or runtime testing.
+
+## 36. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -469,7 +552,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 33. The governing principle
+## 37. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

@@ -456,7 +456,26 @@ When uncertain between two paths, prefer the one that:
 
 This rule should be used whenever there is no strong reason to choose otherwise.
 
-## 32. Keep the next pipeline slice prepared
+## 32. Prioritize large expected gains before marginal tuning
+
+Helix development should spend engineering and validation time on changes that are plausibly capable of producing a meaningful improvement in the main reliability and latency goals.
+
+Do not repeatedly tune a mechanism for small speculative gains while larger unresolved failure classes remain.
+
+Before spending another build or headset-test cycle on incremental tuning, ask:
+
+1. Is this likely to materially reduce the dominant failure rate, recovery time, or latency?
+2. Is the expected gain large enough to justify another validation cycle?
+3. Is there a higher-impact mechanism on the roadmap that is still unimplemented or untested?
+4. Have we already established that the current mechanism is good enough to serve as a checkpoint?
+
+If a change is mainly expected to improve the goal by only a few percent, treat it as later optimization unless that small improvement is required to cross a concrete correctness or latency threshold.
+
+Prefer step-change improvements in failure handling, packet recovery, congestion behavior, and decoder resilience before micro-optimizing already-functional mechanisms.
+
+Once a mechanism has proven its basic value and is good enough to continue the roadmap, record remaining tuning opportunities and move on.
+
+## 33. Keep the next pipeline slice prepared
 
 Helix development should avoid idle gaps between validated slices.
 
@@ -482,7 +501,7 @@ Rules:
 
 At any meaningful checkpoint, there should normally be one active slice under validation and one clearly scoped next slice ready to start.
 
-## 33. Quest runtime validation requires the matching desktop dashboard
+## 34. Quest runtime validation requires the matching desktop dashboard
 
 Quest testing is not complete with only the headset APK and `wivrn-server` binary.
 
@@ -499,7 +518,7 @@ The standard Quest validation chain is:
 
 `matching commit -> server + desktop dashboard -> pairing -> Quest client -> stream -> telemetry`
 
-## 34. Verify the intended build exists before giving local build, install, or test instructions
+## 35. Verify the intended build exists before giving local build, install, or test instructions
 
 Before telling the user to pull, build, install, pair, launch, or test anything locally, first verify that the intended source change actually exists in the exact branch and commit that the local action is supposed to use.
 
@@ -518,7 +537,7 @@ If any prerequisite has not happened, complete or identify that prerequisite fir
 
 This rule exists specifically to prevent wasted local rebuilds, installs, pairing work, and headset test sessions caused by stale or incomplete build inputs.
 
-## 35. Check dependency compatibility before introducing or using a dependency
+## 36. Check dependency compatibility before introducing or using a dependency
 
 Before adding, including, linking, or otherwise relying on a library, logging framework, header-only dependency, generated component, build tool, SDK, or external helper in Helix, verify that it is compatible with the dependency versions and build configuration already used by WiVRn and the surrounding toolchain.
 
@@ -539,7 +558,7 @@ Prefer WiVRn's existing dependency path when it provides the required functional
 
 A local header compiling successfully is not proof of dependency compatibility. Dependency and ABI assumptions must be verified before local build or runtime testing.
 
-## 36. Match local commands to the user's active shell
+## 37. Match local commands to the user's active shell
 
 Before giving local terminal commands, identify and respect the shell the user is actually running.
 
@@ -556,7 +575,7 @@ Rules:
 
 Local instructions are part of the validation chain. A correct code change paired with commands that cannot run in the user's shell is not a complete development step.
 
-## 37. End-of-session checkpoint
+## 38. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -569,7 +588,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 38. The governing principle
+## 39. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

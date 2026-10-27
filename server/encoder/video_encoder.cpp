@@ -54,8 +54,8 @@ namespace wivrn
 namespace
 {
 using helix_pacing_clock = std::chrono::steady_clock;
-constexpr const char * helix_pacing_telemetry_version = "fixed-100us-v1";
-constexpr auto helix_shard_spacing = std::chrono::microseconds(100);
+constexpr const char * helix_pacing_telemetry_version = "fixed-50us-v1";
+constexpr auto helix_shard_spacing = std::chrono::microseconds(50);
 constexpr size_t helix_pacing_bucket_count = 6;
 
 size_t helix_send_span_bucket(uint64_t us)

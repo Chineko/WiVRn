@@ -499,7 +499,26 @@ The standard Quest validation chain is:
 
 `matching commit -> server + desktop dashboard -> pairing -> Quest client -> stream -> telemetry`
 
-## 34. End-of-session checkpoint
+## 34. Verify the intended build exists before giving local build, install, or test instructions
+
+Before telling the user to pull, build, install, pair, launch, or test anything locally, first verify that the intended source change actually exists in the exact branch and commit that the local action is supposed to use.
+
+Do not assume that a discussed change has already been implemented, committed, pushed, built, or installed.
+
+Before issuing local-action commands, check the applicable state explicitly:
+
+1. confirm the intended code or documentation change has actually been implemented
+2. confirm it is committed on the expected branch when a commit is required
+3. confirm it is pushed when the user's next step depends on pulling or CI seeing it
+4. confirm the local build inputs should contain that commit before asking the user to rebuild
+5. confirm matching Quest and desktop artifacts are required and current before runtime validation
+6. distinguish clearly between "planned", "implemented locally", "committed", "pushed", "built", and "installed"
+
+If any prerequisite has not happened, complete or identify that prerequisite first. Never jump directly to local commands for a build that does not yet contain the intended change.
+
+This rule exists specifically to prevent wasted local rebuilds, installs, pairing work, and headset test sessions caused by stale or incomplete build inputs.
+
+## 35. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -512,7 +531,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 35. The governing principle
+## 36. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

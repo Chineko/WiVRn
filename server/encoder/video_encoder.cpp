@@ -31,6 +31,7 @@
 #include <array>
 #include <chrono>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #if WIVRN_USE_NVENC
@@ -53,7 +54,8 @@ namespace wivrn
 namespace
 {
 using helix_pacing_clock = std::chrono::steady_clock;
-constexpr const char * helix_pacing_telemetry_version = "unpaced-v1";
+constexpr const char * helix_pacing_telemetry_version = "fixed-100us-v1";
+constexpr auto helix_shard_spacing = std::chrono::microseconds(100);
 constexpr size_t helix_pacing_bucket_count = 6;
 
 size_t helix_send_span_bucket(uint64_t us)
@@ -391,7 +393,7 @@ video_encoder::video_encoder(vk_bundle & vk,
         }
 {
 	assert(this->idr);
-	U_LOG_I("Helix pacing telemetry %s stream=%u", helix_pacing_telemetry_version, stream_idx);
+	U_LOG_I("Helix pacing telemetry %s stream=%u shard_spacing=%lluus", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));
 }
 
 video_encoder::~video_encoder()
@@ -503,12 +505,6 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 		helix_current_frame_shards = 0;
 		helix_note_frame_gap(this, shard.frame_idx, gap_us);
 	}
-	if (end_of_frame)
-	{
-		timing_info.send_end = clock.to_headset(os_monotonic_get_ns());
-		if (not timing_info.encode_end)
-			timing_info.encode_end = timing_info.send_end;
-	}
 	if (video_dump)
 		video_dump.write((char *)data.data(), data.size());
 
@@ -518,12 +514,21 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 	auto end = data.end();
 	while (begin != end)
 	{
+		if (cnx->has_stream() and not control and shard.shard_idx > 0)
+		{
+			auto target_send_time = helix_frame_send_started_at + helix_shard_spacing * shard.shard_idx;
+			std::this_thread::sleep_until(target_send_time);
+		}
+
 		const size_t payload_size = std::max(0z, max_payload_size - ssize_t(serialized_size(shard.view_info)));
 		auto next = std::min(end, begin + payload_size);
 		if (next == end)
 		{
 			if (end_of_frame)
 			{
+				timing_info.send_end = clock.to_headset(os_monotonic_get_ns());
+				if (not timing_info.encode_end)
+					timing_info.encode_end = timing_info.send_end;
 				if (serialized_size(timing_info) + std::distance(begin, next) <= max_payload_size)
 					shard.timing_info = timing_info;
 				else

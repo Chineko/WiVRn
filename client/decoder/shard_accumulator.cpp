@@ -18,6 +18,7 @@
  */
 
 #include "shard_accumulator.h"
+#include "helix_diagnostics.h"
 #include "scenes/stream.h" // IWYU pragma: keep
 #include "spdlog/spdlog.h"
 #include "xr/instance.h"
@@ -82,6 +83,7 @@ static void debug_why_not_sent(const shard_set & shards)
 	const auto & frame = shards.data;
 	if (frame.empty())
 	{
+		helix_diag::note_incomplete_frame(shards.feedback.stream_index, 0, true);
 		spdlog::info("frame {} was not sent because no shard was received", shards.frame_index());
 		return;
 	}
@@ -100,6 +102,7 @@ static void debug_why_not_sent(const shard_set & shards)
 	}
 
 	bool end = frame.back() and frame.back()->timing_info;
+	helix_diag::note_incomplete_frame(shards.feedback.stream_index, missing, false);
 	spdlog::info("frame {} was not sent with {} data shards, {}{} missing", frame_idx, data, end ? "" : "at least ", missing);
 }
 
@@ -117,6 +120,7 @@ void shard_accumulator::push_shard(video_stream_data_shard && shard)
 	if (shard.frame_idx < current.frame_index())
 	{
 		// frame is in the past, drop it
+		helix_diag::note_old_shard(current.feedback.stream_index);
 		spdlog::info("Drop shard for old frame {} (current {})", shard.frame_idx, current.frame_index());
 	}
 	else if (frame_diff == 0)
@@ -139,6 +143,7 @@ void shard_accumulator::push_shard(video_stream_data_shard && shard)
 	}
 	else if (frame_diff == 2)
 	{
+		helix_diag::note_frame_jump(current.feedback.stream_index, 1);
 		debug_why_not_sent(current);
 		send_feedback(current.feedback);
 
@@ -149,6 +154,7 @@ void shard_accumulator::push_shard(video_stream_data_shard && shard)
 	else
 	{
 		// We have lost more than one frame
+		helix_diag::note_frame_jump(current.feedback.stream_index, frame_diff);
 		send_feedback(current.feedback);
 		send_feedback(next.feedback);
 
@@ -198,6 +204,12 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	current.feedback.encode_end = timing_info.encode_end;
 	current.feedback.send_begin = timing_info.send_begin;
 	current.feedback.send_end = timing_info.send_end;
+
+	if (current.feedback.received_last_packet >= current.feedback.received_first_packet)
+	{
+		auto assembly_us = static_cast<uint64_t>((current.feedback.received_last_packet - current.feedback.received_first_packet) / 1'000);
+		helix_diag::note_frame_complete(current.feedback.stream_index, assembly_us);
+	}
 
 	if (not data_shards.front()->view_info)
 	{

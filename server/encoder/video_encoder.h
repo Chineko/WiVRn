@@ -24,12 +24,14 @@
 #include "wivrn_packets.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -56,6 +58,7 @@ protected:
 		std::shared_ptr<void> mem;
 		// true if data should be sent over reliable (TCP) socket
 		bool prefer_control = false;
+		std::chrono::steady_clock::time_point helix_enqueued_at{};
 	};
 
 private:
@@ -108,6 +111,12 @@ private:
 	std::ofstream video_dump;
 
 	std::shared_ptr<sender> shared_sender;
+
+	// Helix 0.2 telemetry: measure the existing unpaced sender before changing behavior.
+	std::chrono::steady_clock::time_point helix_frame_send_started_at{};
+	std::optional<std::chrono::steady_clock::time_point> helix_last_frame_send_started_at;
+	uint64_t helix_current_frame_bytes = 0;
+	uint64_t helix_current_frame_shards = 0;
 
 protected:
 	std::atomic_uint32_t pending_bitrate;

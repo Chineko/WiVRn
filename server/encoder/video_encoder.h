@@ -58,15 +58,20 @@ protected:
 		std::shared_ptr<void> mem;
 		// true if data should be sent over reliable (TCP) socket
 		bool prefer_control = false;
-		std::chrono::steady_clock::time_point helix_enqueued_at{};
 	};
 
 private:
 	class sender
 	{
+		struct queued_data
+		{
+			data payload;
+			std::chrono::steady_clock::time_point enqueued_at;
+		};
+
 		std::mutex mutex;
 		std::condition_variable cv;
-		std::deque<data> pending;
+		std::deque<queued_data> pending;
 		std::jthread thread;
 		void run();
 		sender();

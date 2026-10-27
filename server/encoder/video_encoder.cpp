@@ -27,7 +27,10 @@
 #include "utils/wivrn_trace.h"
 #include "wivrn_config.h"
 
+#include <array>
+#include <chrono>
 #include <string>
+#include <unordered_map>
 
 #if WIVRN_USE_NVENC
 #include "video_encoder_nvenc.h"
@@ -46,6 +49,167 @@
 
 namespace wivrn
 {
+namespace
+{
+using helix_pacing_clock = std::chrono::steady_clock;
+constexpr const char * helix_pacing_telemetry_version = "unpaced-v1";
+constexpr size_t helix_pacing_bucket_count = 6;
+
+size_t helix_send_span_bucket(uint64_t us)
+{
+	for (size_t i = 0; auto threshold: {250u, 500u, 1'000u, 2'000u, 4'000u})
+	{
+		if (us < threshold)
+			return i;
+		++i;
+	}
+	return helix_pacing_bucket_count - 1;
+}
+
+size_t helix_queue_delay_bucket(uint64_t us)
+{
+	for (size_t i = 0; auto threshold: {100u, 500u, 1'000u, 2'000u, 5'000u})
+	{
+		if (us < threshold)
+			return i;
+		++i;
+	}
+	return helix_pacing_bucket_count - 1;
+}
+
+struct helix_pacing_stats
+{
+	uint64_t frames = 0;
+	uint64_t payload_bytes = 0;
+	uint64_t shards = 0;
+	uint64_t frame_bytes_max = 0;
+	uint64_t frame_shards_max = 0;
+	uint64_t send_span_total_us = 0;
+	uint64_t send_span_max_us = 0;
+	uint64_t payload_rate_max_kbps = 0;
+	std::array<uint64_t, helix_pacing_bucket_count> send_span_hist{};
+
+	uint64_t enqueue_events = 0;
+	uint64_t sender_queue_depth_max = 0;
+	uint64_t sender_queue_delay_samples = 0;
+	uint64_t sender_queue_delay_total_us = 0;
+	uint64_t sender_queue_delay_max_us = 0;
+	std::array<uint64_t, helix_pacing_bucket_count> sender_queue_delay_hist{};
+
+	uint64_t inter_frame_gap_samples = 0;
+	uint64_t inter_frame_gap_total_us = 0;
+	uint64_t inter_frame_gap_max_us = 0;
+};
+
+std::mutex helix_pacing_stats_mutex;
+std::unordered_map<video_encoder *, helix_pacing_stats> helix_pacing_stats_by_encoder;
+
+uint64_t helix_duration_us(helix_pacing_clock::time_point newer, helix_pacing_clock::time_point older)
+{
+	return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(newer - older).count());
+}
+
+void helix_note_enqueue(video_encoder * encoder, size_t queue_depth)
+{
+	std::scoped_lock lock(helix_pacing_stats_mutex);
+	auto & stats = helix_pacing_stats_by_encoder[encoder];
+	stats.enqueue_events++;
+	stats.sender_queue_depth_max = std::max<uint64_t>(stats.sender_queue_depth_max, queue_depth);
+}
+
+void helix_note_sender_queue_delay(video_encoder * encoder, uint64_t queue_delay_us)
+{
+	{
+		std::scoped_lock lock(helix_pacing_stats_mutex);
+		auto & stats = helix_pacing_stats_by_encoder[encoder];
+		stats.sender_queue_delay_samples++;
+		stats.sender_queue_delay_total_us += queue_delay_us;
+		stats.sender_queue_delay_max_us = std::max(stats.sender_queue_delay_max_us, queue_delay_us);
+		stats.sender_queue_delay_hist[helix_queue_delay_bucket(queue_delay_us)]++;
+	}
+	if (queue_delay_us >= 5'000)
+		spdlog::warn("Helix pacing sender queue delay stream={} delay={}us", encoder->stream_idx, queue_delay_us);
+}
+
+void helix_note_frame_gap(video_encoder * encoder, uint64_t frame_index, uint64_t gap_us)
+{
+	if (gap_us == 0)
+		return;
+	{
+		std::scoped_lock lock(helix_pacing_stats_mutex);
+		auto & stats = helix_pacing_stats_by_encoder[encoder];
+		stats.inter_frame_gap_samples++;
+		stats.inter_frame_gap_total_us += gap_us;
+		stats.inter_frame_gap_max_us = std::max(stats.inter_frame_gap_max_us, gap_us);
+	}
+	if (gap_us >= 40'000)
+		spdlog::warn("Helix pacing frame gap stream={} frame={} gap={}us", encoder->stream_idx, frame_index, gap_us);
+}
+
+void helix_note_frame_sent(video_encoder * encoder, uint64_t frame_index, uint64_t bytes, uint64_t shards, uint64_t send_span_us)
+{
+	uint64_t payload_rate_kbps = send_span_us ? bytes * 8'000 / send_span_us : 0;
+	{
+		std::scoped_lock lock(helix_pacing_stats_mutex);
+		auto & stats = helix_pacing_stats_by_encoder[encoder];
+		stats.frames++;
+		stats.payload_bytes += bytes;
+		stats.shards += shards;
+		stats.frame_bytes_max = std::max(stats.frame_bytes_max, bytes);
+		stats.frame_shards_max = std::max(stats.frame_shards_max, shards);
+		stats.send_span_total_us += send_span_us;
+		stats.send_span_max_us = std::max(stats.send_span_max_us, send_span_us);
+		stats.payload_rate_max_kbps = std::max(stats.payload_rate_max_kbps, payload_rate_kbps);
+		stats.send_span_hist[helix_send_span_bucket(send_span_us)]++;
+	}
+	if (send_span_us >= 4'000)
+		spdlog::warn(
+		        "Helix pacing slow send stream={} frame={} payload={}B shards={} span={}us payload_rate={}kbps",
+		        encoder->stream_idx, frame_index, bytes, shards, send_span_us, payload_rate_kbps);
+}
+
+void helix_log_pacing_summary(video_encoder * encoder)
+{
+	helix_pacing_stats stats;
+	{
+		std::scoped_lock lock(helix_pacing_stats_mutex);
+		auto it = helix_pacing_stats_by_encoder.find(encoder);
+		if (it == helix_pacing_stats_by_encoder.end())
+			return;
+		stats = it->second;
+		helix_pacing_stats_by_encoder.erase(it);
+	}
+
+	uint64_t frame_bytes_avg = stats.frames ? stats.payload_bytes / stats.frames : 0;
+	uint64_t frame_shards_avg = stats.frames ? stats.shards / stats.frames : 0;
+	uint64_t send_span_avg_us = stats.frames ? stats.send_span_total_us / stats.frames : 0;
+	uint64_t queue_delay_avg_us = stats.sender_queue_delay_samples ? stats.sender_queue_delay_total_us / stats.sender_queue_delay_samples : 0;
+	uint64_t inter_frame_gap_avg_us = stats.inter_frame_gap_samples ? stats.inter_frame_gap_total_us / stats.inter_frame_gap_samples : 0;
+
+	spdlog::info(
+	        "Helix pacing baseline stream {}: version={} frames={} payload_bytes={} shards={} frame_bytes(avg/max)={}/{} frame_shards(avg/max)={}/{} send_span(avg/max)={}/{}us payload_rate_max={}kbps sender_queue(events/depth_max)={}/{} sender_queue_delay(avg/max)={}/{}us inter_frame_gap(avg/max)={}/{}us hist_send_span(<0.25/0.5/1/2/4/>4ms)={}/{}/{}/{}/{}/{} hist_queue_delay(<0.1/0.5/1/2/5/>5ms)={}/{}/{}/{}/{}/{}",
+	        encoder->stream_idx,
+	        helix_pacing_telemetry_version,
+	        stats.frames,
+	        stats.payload_bytes,
+	        stats.shards,
+	        frame_bytes_avg,
+	        stats.frame_bytes_max,
+	        frame_shards_avg,
+	        stats.frame_shards_max,
+	        send_span_avg_us,
+	        stats.send_span_max_us,
+	        stats.payload_rate_max_kbps,
+	        stats.enqueue_events,
+	        stats.sender_queue_depth_max,
+	        queue_delay_avg_us,
+	        stats.sender_queue_delay_max_us,
+	        inter_frame_gap_avg_us,
+	        stats.inter_frame_gap_max_us,
+	        stats.send_span_hist[0], stats.send_span_hist[1], stats.send_span_hist[2], stats.send_span_hist[3], stats.send_span_hist[4], stats.send_span_hist[5],
+	        stats.sender_queue_delay_hist[0], stats.sender_queue_delay_hist[1], stats.sender_queue_delay_hist[2], stats.sender_queue_delay_hist[3], stats.sender_queue_delay_hist[4], stats.sender_queue_delay_hist[5]);
+}
+} // namespace
 
 video_encoder::sender::sender() :
         thread([this](std::stop_token t) {
@@ -61,6 +225,8 @@ video_encoder::sender::sender() :
 		        }
 		        if (d and not d->span.empty())
 		        {
+			        auto queue_delay_us = helix_duration_us(helix_pacing_clock::now(), d->helix_enqueued_at);
+			        helix_note_sender_queue_delay(d->encoder, queue_delay_us);
 			        d->encoder->SendData(d->span, true, d->prefer_control);
 			        std::unique_lock lock(mutex);
 			        pending.pop_front();
@@ -76,8 +242,11 @@ video_encoder::sender::sender() :
 
 void video_encoder::sender::push(data && d)
 {
+	d.helix_enqueued_at = helix_pacing_clock::now();
+	video_encoder * encoder = d.encoder;
 	std::unique_lock lock(mutex);
 	pending.push_back(std::move(d));
+	helix_note_enqueue(encoder, pending.size());
 	cv.notify_all();
 }
 
@@ -204,12 +373,14 @@ video_encoder::video_encoder(vk_bundle & vk,
         }
 {
 	assert(this->idr);
+	spdlog::info("Helix pacing telemetry {} stream={}", helix_pacing_telemetry_version, stream_idx);
 }
 
 video_encoder::~video_encoder()
 {
 	if (shared_sender)
 		shared_sender->wait_idle(this);
+	helix_log_pacing_summary(this);
 }
 
 void video_encoder::on_feedback(const from_headset::feedback & feedback)
@@ -303,6 +474,16 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 		// One SendData call per NAL; span the whole frame, not each call.
 		wivrn::trace::cpu_begin(wivrn::trace::cpu_track::network, stream_idx, shard.frame_idx, "SendData");
 		timing_info.send_begin = clock.to_headset(os_monotonic_get_ns());
+
+		auto now = helix_pacing_clock::now();
+		uint64_t gap_us = 0;
+		if (helix_last_frame_send_started_at)
+			gap_us = helix_duration_us(now, *helix_last_frame_send_started_at);
+		helix_last_frame_send_started_at = now;
+		helix_frame_send_started_at = now;
+		helix_current_frame_bytes = 0;
+		helix_current_frame_shards = 0;
+		helix_note_frame_gap(this, shard.frame_idx, gap_us);
 	}
 	if (end_of_frame)
 	{
@@ -332,6 +513,8 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			}
 		}
 		shard.payload = {begin, next};
+		helix_current_frame_bytes += std::distance(begin, next);
+		helix_current_frame_shards++;
 		try
 		{
 			if (control)
@@ -348,7 +531,11 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 		begin = next;
 	}
 	if (end_of_frame)
+	{
+		auto send_span_us = helix_duration_us(helix_pacing_clock::now(), helix_frame_send_started_at);
+		helix_note_frame_sent(this, shard.frame_idx, helix_current_frame_bytes, helix_current_frame_shards, send_span_us);
 		wivrn::trace::cpu_end(wivrn::trace::cpu_track::network, stream_idx, shard.frame_idx, "SendData");
+	}
 }
 
 } // namespace wivrn

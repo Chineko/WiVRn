@@ -482,7 +482,24 @@ Rules:
 
 At any meaningful checkpoint, there should normally be one active slice under validation and one clearly scoped next slice ready to start.
 
-## 33. End-of-session checkpoint
+## 33. Quest runtime validation requires the matching desktop dashboard
+
+Quest testing is not complete with only the headset APK and `wivrn-server` binary.
+
+For any Quest runtime or pairing test:
+
+1. build the WiVRn server and desktop dashboard/client from the same Helix commit as the Quest APK
+2. use that matching desktop dashboard/client for pairing
+3. start the matching server through the normal desktop workflow unless the test explicitly targets server-only behavior
+4. verify the desktop and headset builds are protocol-compatible before diagnosing streaming or decoder behavior
+
+Do not treat the desktop dashboard as optional during Quest validation. A server-only build is insufficient for the normal pairing workflow and must not be presented as a complete Quest test setup.
+
+The standard Quest validation chain is:
+
+`matching commit -> server + desktop dashboard -> pairing -> Quest client -> stream -> telemetry`
+
+## 34. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -495,7 +512,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 34. The governing principle
+## 35. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

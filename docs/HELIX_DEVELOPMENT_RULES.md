@@ -518,7 +518,28 @@ If any prerequisite has not happened, complete or identify that prerequisite fir
 
 This rule exists specifically to prevent wasted local rebuilds, installs, pairing work, and headset test sessions caused by stale or incomplete build inputs.
 
-## 35. End-of-session checkpoint
+## 35. Check dependency compatibility before introducing or using a dependency
+
+Before adding, including, linking, or otherwise relying on a library, logging framework, header-only dependency, generated component, build tool, SDK, or external helper in Helix, verify that it is compatible with the dependency versions and build configuration already used by WiVRn and the surrounding toolchain.
+
+Do not assume that a dependency is safe merely because its headers are available on the development machine or because another part of the system uses a similarly named library.
+
+Before using a dependency in a code slice, check as applicable:
+
+1. whether WiVRn already provides an existing API or wrapper that should be preferred
+2. the exact library and ABI version already linked by the affected target
+3. whether headers and linked binaries come from the same compatible version
+4. whether introducing the dependency changes transitive link requirements
+5. whether static/shared linking, compile definitions, or feature flags differ across Linux, Android, CI, Flatpak, Nix, or other supported build paths
+6. whether the dependency conflicts with another library in the chain, including bundled versus system copies
+7. whether a header-only use still emits symbols that require an additional linked library
+8. whether warning-as-error or compiler-version differences can expose compatibility problems on other targets
+
+Prefer WiVRn's existing dependency path when it provides the required functionality. Introduce a new dependency or alternate copy only when there is a clear need and its compatibility has been checked across the affected build targets.
+
+A local header compiling successfully is not proof of dependency compatibility. Dependency and ABI assumptions must be verified before local build or runtime testing.
+
+## 36. End-of-session checkpoint
 
 At the end of each substantial development session, record:
 
@@ -531,7 +552,7 @@ At the end of each substantial development session, record:
 
 This prevents future work from repeating old investigations or losing context.
 
-## 36. The governing principle
+## 37. The governing principle
 
 The purpose of Helix is not to build the most complicated streaming stack.
 

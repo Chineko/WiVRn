@@ -109,7 +109,9 @@ struct android_blit_handle : public decoder::blit_handle
 
 using helix_clock = std::chrono::steady_clock;
 constexpr size_t helix_submit_history_limit = 64;
-constexpr const char * helix_diagnostics_version = "router-quest-v1";
+constexpr uint64_t helix_watchdog_pending_threshold = 5;
+constexpr uint64_t helix_watchdog_age_threshold_us = 35'000;
+constexpr const char * helix_diagnostics_version = "time-aware-v1";
 
 enum class helix_decoder_failure
 {
@@ -133,6 +135,7 @@ struct helix_decoder_health
 	std::optional<helix_clock::time_point> recovery_started_at;
 	std::optional<helix_clock::time_point> last_media_output_at;
 	std::optional<helix_clock::time_point> last_image_at;
+	std::optional<helix_clock::time_point> last_complete_submission_at;
 	uint64_t last_recovery_request_frame = 0;
 	uint64_t codec_generation = 0;
 	uint64_t complete_submissions_without_output = 0;
@@ -141,10 +144,13 @@ struct helix_decoder_health
 	bool recovery_pending = false;
 	bool flush_attempted = false;
 	bool stall_active = false;
+	bool watchdog_candidate_active = false;
 
 	uint64_t submitted_frames = 0;
 	uint64_t decoded_outputs = 0;
 	uint64_t media_output_callbacks = 0;
+	uint64_t watchdog_candidates = 0;
+	uint64_t watchdog_deferred = 0;
 	uint64_t stalls_detected = 0;
 	uint64_t recovery_requests_sent = 0;
 	uint64_t recovery_requests_suppressed = 0;
@@ -168,6 +174,11 @@ struct helix_decoder_health
 	std::array<uint64_t, wivrn::helix_diag::latency_bucket_count> submit_to_media_hist{};
 	uint64_t media_output_gap_max_us = 0;
 	std::array<uint64_t, wivrn::helix_diag::latency_bucket_count> media_output_gap_hist{};
+	uint64_t complete_interval_samples = 0;
+	uint64_t complete_interval_total_us = 0;
+	uint64_t complete_interval_last_us = 0;
+	uint64_t complete_interval_max_us = 0;
+	std::array<uint64_t, wivrn::helix_diag::latency_bucket_count> complete_interval_hist{};
 	uint64_t release_to_image_samples = 0;
 	uint64_t release_to_image_total_us = 0;
 	uint64_t release_to_image_max_us = 0;
@@ -211,13 +222,16 @@ void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index
 	std::scoped_lock lock(state->mutex);
 	uint64_t latency_average_us = state->latency_samples ? state->latency_total_us / state->latency_samples : 0;
 	uint64_t submit_to_media_average_us = state->submit_to_media_samples ? state->submit_to_media_total_us / state->submit_to_media_samples : 0;
+	uint64_t complete_interval_average_us = state->complete_interval_samples ? state->complete_interval_total_us / state->complete_interval_samples : 0;
 	uint64_t release_to_image_average_us = state->release_to_image_samples ? state->release_to_image_total_us / state->release_to_image_samples : 0;
 	uint64_t image_processing_average_us = state->image_processing_samples ? state->image_processing_total_us / state->image_processing_samples : 0;
 	spdlog::info(
-	        "Helix decoder summary stream {}: submitted={} decoded={} stalls={} recovery_sent={} recovery_suppressed={} recoveries={} flush={}/{}/{} latency_avg={}us latency_max={}us errors(async/input/overflow/output/image)={}/{}/{}/{}/{}",
+	        "Helix decoder summary stream {}: submitted={} decoded={} watchdog_candidates={} deferred={} stalls={} recovery_sent={} recovery_suppressed={} recoveries={} flush={}/{}/{} latency_avg={}us latency_max={}us errors(async/input/overflow/output/image)={}/{}/{}/{}/{}",
 	        stream_index,
 	        state->submitted_frames,
 	        state->decoded_outputs,
+	        state->watchdog_candidates,
+	        state->watchdog_deferred,
 	        state->stalls_detected,
 	        state->recovery_requests_sent,
 	        state->recovery_requests_suppressed,
@@ -233,12 +247,15 @@ void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index
 	        state->output_release_failures,
 	        state->image_output_failures);
 	spdlog::info(
-	        "Helix diagnostic summary stream {}: media_outputs={} submit_to_media(avg/max)={}/{}us output_gap_max={}us release_to_image(avg/max)={}/{}us image_processing(avg/max)={}/{}us hist_submit_image(<5/10/20/40/80/>80ms)={}/{}/{}/{}/{}/{} hist_submit_media={}/{}/{}/{}/{}/{} hist_output_gap={}/{}/{}/{}/{}/{} hist_release_image={}/{}/{}/{}/{}/{} hist_image_processing={}/{}/{}/{}/{}/{} network(complete/incomplete/zero/missing/old/jumps/skipped)={}/{}/{}/{}/{}/{}/{} assembly(last/max)={}/{}us hist_assembly={}/{}/{}/{}/{}/{}",
+	        "Helix diagnostic summary stream {}: media_outputs={} submit_to_media(avg/max)={}/{}us output_gap_max={}us complete_interval(avg/last/max)={}/{}/{}us release_to_image(avg/max)={}/{}us image_processing(avg/max)={}/{}us hist_submit_image(<5/10/20/40/80/>80ms)={}/{}/{}/{}/{}/{} hist_submit_media={}/{}/{}/{}/{}/{} hist_output_gap={}/{}/{}/{}/{}/{} hist_complete_interval={}/{}/{}/{}/{}/{} hist_release_image={}/{}/{}/{}/{}/{} hist_image_processing={}/{}/{}/{}/{}/{} network(complete/incomplete/zero/missing/old/jumps/skipped)={}/{}/{}/{}/{}/{}/{} assembly(last/max)={}/{}us hist_assembly={}/{}/{}/{}/{}/{}",
 	        stream_index,
 	        state->media_output_callbacks,
 	        submit_to_media_average_us,
 	        state->submit_to_media_max_us,
 	        state->media_output_gap_max_us,
+	        complete_interval_average_us,
+	        state->complete_interval_last_us,
+	        state->complete_interval_max_us,
 	        release_to_image_average_us,
 	        state->release_to_image_max_us,
 	        image_processing_average_us,
@@ -246,6 +263,7 @@ void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index
 	        state->latency_hist[0], state->latency_hist[1], state->latency_hist[2], state->latency_hist[3], state->latency_hist[4], state->latency_hist[5],
 	        state->submit_to_media_hist[0], state->submit_to_media_hist[1], state->submit_to_media_hist[2], state->submit_to_media_hist[3], state->submit_to_media_hist[4], state->submit_to_media_hist[5],
 	        state->media_output_gap_hist[0], state->media_output_gap_hist[1], state->media_output_gap_hist[2], state->media_output_gap_hist[3], state->media_output_gap_hist[4], state->media_output_gap_hist[5],
+	        state->complete_interval_hist[0], state->complete_interval_hist[1], state->complete_interval_hist[2], state->complete_interval_hist[3], state->complete_interval_hist[4], state->complete_interval_hist[5],
 	        state->release_to_image_hist[0], state->release_to_image_hist[1], state->release_to_image_hist[2], state->release_to_image_hist[3], state->release_to_image_hist[4], state->release_to_image_hist[5],
 	        state->image_processing_hist[0], state->image_processing_hist[1], state->image_processing_hist[2], state->image_processing_hist[3], state->image_processing_hist[4], state->image_processing_hist[5],
 	        network.completed_frames, network.incomplete_frames, network.zero_shard_frames, network.missing_shards, network.old_shards, network.frame_jump_events, network.skipped_frames,
@@ -297,6 +315,9 @@ void helix_note_media_output(wivrn::android::decoder * decoder, uint64_t frame_i
 	std::scoped_lock lock(state->mutex);
 	auto now = helix_clock::now();
 	state->media_output_callbacks++;
+	state->complete_submissions_without_output = 0;
+	state->watchdog_candidate_active = false;
+	state->stall_active = false;
 	if (state->last_media_output_at)
 	{
 		auto gap_us = helix_duration_us(now, *state->last_media_output_at);
@@ -347,11 +368,9 @@ void helix_note_decoded(wivrn::android::decoder * decoder, uint8_t stream_index,
 		auto now = helix_clock::now();
 		state->decoded_outputs++;
 		state->complete_submissions_without_output = 0;
-
-		if (state->last_image_at)
-			state->last_image_at = now;
-		else
-			state->last_image_at = now;
+		state->watchdog_candidate_active = false;
+		state->stall_active = false;
+		state->last_image_at = now;
 
 		if (auto it = state->released_at.find(frame_index); it != state->released_at.end())
 		{
@@ -385,7 +404,6 @@ void helix_note_decoded(wivrn::android::decoder * decoder, uint8_t stream_index,
 			state->recovery_requests = 0;
 			state->complete_submissions_since_recovery_request = 0;
 			state->flush_attempted = false;
-			state->stall_active = false;
 			state->recovery_started_at.reset();
 			recovered = true;
 		}
@@ -415,12 +433,12 @@ void helix_request_recovery(
 		}
 
 		uint64_t frame_index = preferred_frame.value_or(state->last_complete_feedback->frame_index);
-		// Count complete decoder submissions, not frame-number distance. Network loss
-		// can create frame-index gaps and must not accelerate decoder escalation.
 		if (state->recovery_pending && state->complete_submissions_since_recovery_request <= 8)
 		{
 			state->recovery_requests_suppressed++;
-			spdlog::debug("Helix suppressed duplicate recovery request on stream {} at frame {}", stream_index, frame_index);
+			spdlog::info(
+			        "Helix diagnostic recovery action stream={} frame={} action=idr_suppressed complete_submissions_since_request={} reason={}",
+			        stream_index, frame_index, state->complete_submissions_since_recovery_request, reason);
 			return;
 		}
 
@@ -444,7 +462,14 @@ void helix_request_recovery(
 			if (!state->recovery_started_at)
 				state->recovery_started_at = helix_clock::now();
 		}
+		spdlog::info("Helix diagnostic recovery action stream={} frame={} action=idr_sent reason={}",
+		             stream_index, recovery_feedback->frame_index, reason);
 		scene->send_feedback(*recovery_feedback);
+	}
+	else
+	{
+		spdlog::warn("Helix diagnostic recovery action stream={} frame={} action=idr_not_sent_scene_unavailable reason={}",
+		             stream_index, recovery_feedback->frame_index, reason);
 	}
 }
 
@@ -489,6 +514,8 @@ void helix_reset_after_flush(wivrn::android::decoder * decoder)
 	state->release_order.clear();
 	state->complete_submissions_without_output = 0;
 	state->complete_submissions_since_recovery_request = 0;
+	state->watchdog_candidate_active = false;
+	state->stall_active = false;
 	state->recovery_pending = false;
 	state->recovery_requests = 0;
 }
@@ -500,7 +527,9 @@ void helix_note_submitted(
         const wivrn::from_headset::feedback & feedback)
 {
 	auto state = helix_health(decoder);
-	bool stalled = false;
+	bool candidate = false;
+	bool new_candidate = false;
+	bool recovery_qualified = false;
 	bool new_stall = false;
 	uint64_t complete_frames_without_output = 0;
 	uint64_t frame_index_gap = 0;
@@ -511,6 +540,8 @@ void helix_note_submitted(
 	uint64_t burst_5ms = 0;
 	uint64_t burst_10ms = 0;
 	uint64_t burst_20ms = 0;
+	uint64_t complete_interval_last_us = 0;
+	uint64_t complete_interval_max_us = 0;
 	{
 		std::scoped_lock lock(state->mutex);
 		auto now = helix_clock::now();
@@ -518,6 +549,17 @@ void helix_note_submitted(
 		state->complete_submissions_without_output++;
 		if (state->recovery_pending)
 			state->complete_submissions_since_recovery_request++;
+		if (state->last_complete_submission_at)
+		{
+			complete_interval_last_us = helix_duration_us(now, *state->last_complete_submission_at);
+			state->complete_interval_last_us = complete_interval_last_us;
+			state->complete_interval_max_us = std::max(state->complete_interval_max_us, complete_interval_last_us);
+			state->complete_interval_total_us += complete_interval_last_us;
+			state->complete_interval_samples++;
+			state->complete_interval_hist[wivrn::helix_diag::latency_bucket(complete_interval_last_us)]++;
+		}
+		state->last_complete_submission_at = now;
+		complete_interval_max_us = state->complete_interval_max_us;
 		state->last_complete_feedback = feedback;
 		state->submitted_at[feedback.frame_index] = now;
 		state->submit_order.push_back(feedback.frame_index);
@@ -536,13 +578,9 @@ void helix_note_submitted(
 			frame_index_gap = feedback.frame_index - *state->first_submitted_frame + 1;
 
 		complete_frames_without_output = state->complete_submissions_without_output;
-		stalled = complete_frames_without_output > 4;
-		if (stalled && !state->stall_active)
+		candidate = complete_frames_without_output >= helix_watchdog_pending_threshold;
+		if (candidate)
 		{
-			state->stall_active = true;
-			state->stalls_detected++;
-			new_stall = true;
-
 			bool first_pending = true;
 			for (const auto & [frame, submitted]: state->submitted_at)
 			{
@@ -569,35 +607,59 @@ void helix_note_submitted(
 				since_media_output_us = helix_duration_us(now, *state->last_media_output_at);
 			if (state->last_image_at)
 				since_image_us = helix_duration_us(now, *state->last_image_at);
+
+			if (!state->watchdog_candidate_active)
+			{
+				state->watchdog_candidate_active = true;
+				state->watchdog_candidates++;
+				new_candidate = true;
+			}
+
+			recovery_qualified = oldest_pending_us >= helix_watchdog_age_threshold_us
+			                     && since_media_output_us >= helix_watchdog_age_threshold_us;
+			if (recovery_qualified && !state->stall_active)
+			{
+				state->stall_active = true;
+				state->stalls_detected++;
+				new_stall = true;
+			}
+			else if (new_candidate && !recovery_qualified)
+			{
+				state->watchdog_deferred++;
+			}
 		}
 	}
 
-	if (new_stall)
+	if (new_candidate || new_stall)
 	{
 		auto network = wivrn::helix_diag::snapshot(stream_index);
 		auto peer = wivrn::helix_diag::note_stall(stream_index);
+		const char * action = new_stall ? "recovery_candidate" : "diagnostic_only_wait";
+		if (new_stall)
+		{
+			spdlog::warn(
+			        "Helix decoder output stall qualified on stream {} with {} complete frames pending, oldest {} us (frame index gap {})",
+			        stream_index, complete_frames_without_output, oldest_pending_us, frame_index_gap);
+		}
 		spdlog::warn(
-		        "Helix decoder output stall detected on stream {} with {} complete frames submitted without output (frame index gap {})",
-		        stream_index, complete_frames_without_output, frame_index_gap);
-		spdlog::warn(
-		        "Helix diagnostic incident stream={} frame={} pending={} oldest_pending={}us newest_pending={}us burst(5/10/20ms)={}/{}/{} since_media_output={}us since_image={}us peer_stall_age={}us peer_within(5/10/20/50ms)={}/{}/{}/{} network(complete/incomplete/zero/missing/old/jumps/skipped)={}/{}/{}/{}/{}/{}/{} assembly(last/max)={}/{}us network_age(incomplete/old/jump)={}/{}/{}us",
-		        stream_index, feedback.frame_index, complete_frames_without_output, oldest_pending_us, newest_pending_us,
-		        burst_5ms, burst_10ms, burst_20ms, since_media_output_us, since_image_us, peer.peer_age_us,
+		        "Helix diagnostic incident stream={} frame={} action={} pending={} oldest_pending={}us newest_pending={}us burst(5/10/20ms)={}/{}/{} since_media_output={}us since_image={}us complete_interval(last/max)={}/{}us threshold={}us peer_stall_age={}us peer_within(5/10/20/50ms)={}/{}/{}/{} network(complete/incomplete/zero/missing/old/jumps/skipped)={}/{}/{}/{}/{}/{}/{} assembly(last/max)={}/{}us network_age(incomplete/old/jump)={}/{}/{}us",
+		        stream_index, feedback.frame_index, action, complete_frames_without_output, oldest_pending_us, newest_pending_us,
+		        burst_5ms, burst_10ms, burst_20ms, since_media_output_us, since_image_us,
+		        complete_interval_last_us, complete_interval_max_us, helix_watchdog_age_threshold_us, peer.peer_age_us,
 		        peer.within_5ms, peer.within_10ms, peer.within_20ms, peer.within_50ms,
 		        network.completed_frames, network.incomplete_frames, network.zero_shard_frames, network.missing_shards,
 		        network.old_shards, network.frame_jump_events, network.skipped_frames,
 		        network.last_assembly_us, network.max_assembly_us,
 		        network.since_incomplete_us, network.since_old_shard_us, network.since_frame_jump_us);
 	}
-	if (stalled)
-		helix_request_recovery(decoder, weak_scene, stream_index, "decoder output stalled", feedback.frame_index);
+	if (recovery_qualified)
+		helix_request_recovery(decoder, weak_scene, stream_index, "decoder output stalled beyond time threshold", feedback.frame_index);
 }
 
 } // namespace
 
 namespace wivrn::android
 {
-
 decoder::decoder(
         vk::raii::Device & device,
         vk::raii::PhysicalDevice & physical_device,
@@ -837,7 +899,6 @@ void decoder::on_image_available(AImageReader * reader)
 		int64_t fake_timestamp_ns;
 		check(AImage_getTimestamp(image.get(), &fake_timestamp_ns), "AImage_getTimestamp");
 		uint64_t frame_index = (fake_timestamp_ns + 5'000'000) / (10'000'000);
-
 		frame_infos.drop_until([frame_index](auto & x) { return x.feedback.frame_index >= frame_index; });
 		auto info = frame_infos.pop_if([frame_index](auto & x) { return x.feedback.frame_index == frame_index; });
 

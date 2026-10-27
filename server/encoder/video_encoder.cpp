@@ -29,6 +29,7 @@
 
 #include <array>
 #include <chrono>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <unordered_map>
 
@@ -215,19 +216,19 @@ video_encoder::sender::sender() :
         thread([this](std::stop_token t) {
 	        while (not t.stop_requested())
 	        {
-		        data * d = nullptr;
+		        queued_data * queued = nullptr;
 		        {
 			        std::unique_lock lock(mutex);
 			        if (pending.empty())
 				        cv.wait_for(lock, std::chrono::milliseconds(100));
 			        else
-				        d = &pending.front();
+				        queued = &pending.front();
 		        }
-		        if (d and not d->span.empty())
+		        if (queued and not queued->payload.span.empty())
 		        {
-			        auto queue_delay_us = helix_duration_us(helix_pacing_clock::now(), d->helix_enqueued_at);
-			        helix_note_sender_queue_delay(d->encoder, queue_delay_us);
-			        d->encoder->SendData(d->span, true, d->prefer_control);
+			        auto queue_delay_us = helix_duration_us(helix_pacing_clock::now(), queued->enqueued_at);
+			        helix_note_sender_queue_delay(queued->payload.encoder, queue_delay_us);
+			        queued->payload.encoder->SendData(queued->payload.span, true, queued->payload.prefer_control);
 			        std::unique_lock lock(mutex);
 			        pending.pop_front();
 			        cv.notify_all();
@@ -242,10 +243,12 @@ video_encoder::sender::sender() :
 
 void video_encoder::sender::push(data && d)
 {
-	d.helix_enqueued_at = helix_pacing_clock::now();
 	video_encoder * encoder = d.encoder;
 	std::unique_lock lock(mutex);
-	pending.push_back(std::move(d));
+	pending.push_back(queued_data{
+	        .payload = std::move(d),
+	        .enqueued_at = helix_pacing_clock::now(),
+	});
 	helix_note_enqueue(encoder, pending.size());
 	cv.notify_all();
 }
@@ -253,7 +256,7 @@ void video_encoder::sender::push(data && d)
 void video_encoder::sender::wait_idle(video_encoder * encoder)
 {
 	std::unique_lock lock(mutex);
-	while (std::ranges::any_of(pending, [=](auto & data) { return data.encoder == encoder; }))
+	while (std::ranges::any_of(pending, [=](auto & queued) { return queued.payload.encoder == encoder; }))
 		cv.wait_for(lock, std::chrono::milliseconds(100));
 }
 

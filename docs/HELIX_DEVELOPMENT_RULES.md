@@ -595,3 +595,30 @@ The purpose of Helix is not to build the most complicated streaming stack.
 The purpose is to build a streaming stack that fails gracefully, recovers quickly, keeps latency bounded, and remains understandable enough to maintain.
 
 When complexity does not produce a measurable reliability or latency benefit, do not add it.
+
+
+## 40. Keep conclusions proportional to the evidence
+
+Helix validation must distinguish clearly between what the evidence directly proves, what it strongly suggests, what remains ambiguous, and what is only a working hypothesis.
+
+Do not turn correlation into causation, and do not describe a telemetry counter as proving more than it actually measures.
+
+For every meaningful validation result or mechanism decision, separate the reasoning into these categories as applicable:
+
+1. **Direct evidence** — behavior directly observed in logs, telemetry, source control flow, build output, or reproducible runtime results.
+2. **Supported inference** — the best explanation consistent with the available evidence, but not uniquely proven by it.
+3. **Remaining ambiguity** — plausible competing explanations that the current experiment cannot distinguish.
+4. **Decision justified by the evidence** — the engineering action that remains reasonable even when the unresolved ambiguity is preserved.
+
+Rules:
+
+- Use causal language only when the experiment actually establishes causation.
+- Prefer wording such as "associated with", "consistent with", "suggests", or "within this mechanism's timing/budget envelope" when the precise cause is not isolated.
+- Do not infer network loss, decoder failure, congestion, host-production stalls, or recovery success from a proxy metric alone when another explanation remains viable.
+- Treat shutdown-tail gaps, missing counters, derived rates, and other indirect measurements according to their actual evidentiary strength.
+- When two or more failure classes may coexist, keep them separate until measurement can attribute events between them.
+- Do not choose the next mechanism merely because it matches the current preferred explanation. Check whether the evidence also supports competing high-impact causes.
+- If an existing log already contains enough information to distinguish hypotheses, analyze it before requesting another build or headset session.
+- Record important caveats and competing explanations in the validation document so later work does not silently promote an inference into a fact.
+
+A useful conclusion is not the strongest statement that can be made. It is the strongest statement the evidence can actually support.

@@ -26,6 +26,25 @@
 #include <spdlog/spdlog.h>
 #include <uni_algo/case.h>
 
+namespace
+{
+constexpr XrDuration helix_rtx_min_remaining_ns = 5'000'000; // provisional usefulness floor, not an RTT estimate
+constexpr uint64_t helix_rtx_max_requests_per_gap = 8;
+
+size_t helix_rtx_gap_bucket(uint64_t gap)
+{
+	if (gap <= 1)
+		return 0;
+	if (gap == 2)
+		return 1;
+	if (gap <= 4)
+		return 2;
+	if (gap <= 8)
+		return 3;
+	return 4;
+}
+} // namespace
+
 void scenes::stream::process_packets()
 {
 #ifdef __ANDROID__
@@ -54,6 +73,21 @@ void scenes::stream::process_packets()
 		        helix_packet_sequence_late_or_duplicate[stream_idx],
 		        helix_unsequenced_video_packets[stream_idx],
 		        helix_highest_packet_sequence[stream_idx].value_or(0));
+		spdlog::info(
+		        "Helix RTX summary stream={} requests={} arrivals={} useful={} late={} skipped_deadline={} skipped_gap_cap={} pending={} gap_hist(1/2/3-4/5-8/>8)={}/{}/{}/{}/{}",
+		        stream_idx,
+		        helix_rtx_requests[stream_idx],
+		        helix_rtx_arrivals[stream_idx],
+		        helix_rtx_arrivals_useful[stream_idx],
+		        helix_rtx_arrivals_late[stream_idx],
+		        helix_rtx_skipped_deadline[stream_idx],
+		        helix_rtx_skipped_gap_cap[stream_idx],
+		        helix_rtx_pending[stream_idx].size(),
+		        helix_rtx_gap_hist[stream_idx][0],
+		        helix_rtx_gap_hist[stream_idx][1],
+		        helix_rtx_gap_hist[stream_idx][2],
+		        helix_rtx_gap_hist[stream_idx][3],
+		        helix_rtx_gap_hist[stream_idx][4]);
 	}
 }
 
@@ -89,6 +123,10 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 		return;
 	}
 
+	auto now = instance.now();
+	if (shard.view_info)
+		helix_rtx_frame_deadline[idx] = shard.view_info->display_time;
+
 	if (shard.packet_sequence == 0)
 	{
 		++helix_unsequenced_video_packets[idx];
@@ -98,13 +136,56 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 		++helix_packet_sequence_received[idx];
 		auto & highest = helix_highest_packet_sequence[idx];
 
+		if (auto pending = helix_rtx_pending[idx].find(shard.packet_sequence); pending != helix_rtx_pending[idx].end())
+		{
+			++helix_rtx_arrivals[idx];
+			if (now < pending->second)
+				++helix_rtx_arrivals_useful[idx];
+			else
+				++helix_rtx_arrivals_late[idx];
+			helix_rtx_pending[idx].erase(pending);
+		}
+
 		if (highest)
 		{
 			if (shard.packet_sequence > *highest)
 			{
 				auto delta = shard.packet_sequence - *highest;
 				if (delta > 1)
-					helix_packet_sequence_forward_gap_candidates[idx] += delta - 1;
+				{
+					auto gap = delta - 1;
+					helix_packet_sequence_forward_gap_candidates[idx] += gap;
+					helix_rtx_gap_hist[idx][helix_rtx_gap_bucket(gap)]++;
+
+					auto deadline = helix_rtx_frame_deadline[idx];
+					if (deadline && *deadline > now + helix_rtx_min_remaining_ns)
+					{
+						auto request_count = std::min<uint64_t>(gap, helix_rtx_max_requests_per_gap);
+						for (uint64_t sequence = *highest + 1; sequence < *highest + 1 + request_count; ++sequence)
+						{
+							try
+							{
+								network_session->send_control(wivrn::from_headset::video_retransmission_request{
+								        .stream_index = idx,
+								        .packet_sequence = sequence,
+								});
+								helix_rtx_pending[idx][sequence] = *deadline;
+								++helix_rtx_requests[idx];
+							}
+							catch (const std::exception & e)
+							{
+								spdlog::warn("Helix RTX request send failed stream={} sequence={}: {}", idx, sequence, e.what());
+								break;
+							}
+						}
+						if (gap > request_count)
+							helix_rtx_skipped_gap_cap[idx] += gap - request_count;
+					}
+					else
+					{
+						helix_rtx_skipped_deadline[idx] += gap;
+					}
+				}
 				highest = shard.packet_sequence;
 			}
 			else
@@ -115,7 +196,11 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 		else
 		{
 			if (shard.packet_sequence > 1)
-				helix_packet_sequence_forward_gap_candidates[idx] += shard.packet_sequence - 1;
+			{
+				auto gap = shard.packet_sequence - 1;
+				helix_packet_sequence_forward_gap_candidates[idx] += gap;
+				helix_rtx_gap_hist[idx][helix_rtx_gap_bucket(gap)]++;
+			}
 			highest = shard.packet_sequence;
 		}
 	}

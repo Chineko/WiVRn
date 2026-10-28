@@ -34,6 +34,8 @@
 #include "wivrn_client.h"
 #include "wivrn_packets.h"
 #include "xr/space.h"
+#include <array>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -84,6 +86,18 @@ private:
 	std::array<uint64_t, decoder_count> helix_packet_sequence_forward_gap_candidates{};
 	std::array<uint64_t, decoder_count> helix_packet_sequence_late_or_duplicate{};
 	std::array<uint64_t, decoder_count> helix_unsequenced_video_packets{};
+
+	// Helix RTX Slice B: receiver-local request state and validation telemetry.
+	std::array<std::optional<XrTime>, decoder_count> helix_rtx_frame_deadline;
+	std::array<std::map<uint64_t, XrTime>, decoder_count> helix_rtx_pending;
+	std::array<uint64_t, decoder_count> helix_rtx_requests{};
+	std::array<uint64_t, decoder_count> helix_rtx_arrivals{};
+	std::array<uint64_t, decoder_count> helix_rtx_arrivals_useful{};
+	std::array<uint64_t, decoder_count> helix_rtx_arrivals_late{};
+	std::array<uint64_t, decoder_count> helix_rtx_skipped_deadline{};
+	std::array<uint64_t, decoder_count> helix_rtx_skipped_gap_cap{};
+	std::array<std::array<uint64_t, 5>, decoder_count> helix_rtx_gap_hist{};
+
 	thread_safe<to_headset::tracking_control> tracking_control{};
 	std::array<std::atomic<interaction_profile>, 3> interaction_profiles; // left hand, right hand, gamepad
 	std::atomic<bool> interaction_profile_changed = false;

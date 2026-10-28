@@ -710,6 +710,12 @@ struct start_app
 struct get_running_applications
 {};
 
+struct video_retransmission_request
+{
+	uint8_t stream_index;
+	uint64_t packet_sequence;
+};
+
 struct set_active_application
 {
 	uint32_t id;
@@ -748,6 +754,7 @@ using packets = std::variant<
         get_application_list,
         start_app,
         get_running_applications,
+        video_retransmission_request,
         set_active_application,
         hid::input,
         stop_application,

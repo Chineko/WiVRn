@@ -186,6 +186,7 @@ public:
 	void operator()(from_headset::get_application_list &&);
 	void operator()(const from_headset::start_app &);
 	void operator()(const from_headset::get_running_applications &);
+	void operator()(const from_headset::video_retransmission_request &);
 	void operator()(const from_headset::set_active_application &);
 	void operator()(const from_headset::stop_application &);
 	void operator()(audio_data &&);

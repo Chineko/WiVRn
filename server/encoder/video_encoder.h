@@ -33,6 +33,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
 namespace wivrn
@@ -124,6 +125,29 @@ private:
 	uint64_t helix_current_frame_shards = 0;
 	uint64_t helix_packet_sequence = 1;
 
+	struct helix_rtx_cache_entry
+	{
+		uint64_t packet_sequence;
+		uint64_t frame_idx;
+		uint16_t shard_idx;
+		std::optional<to_headset::video_stream_data_shard::view_info_t> view_info;
+		std::optional<to_headset::video_stream_data_shard::timing_info_t> timing_info;
+		std::vector<uint8_t> payload;
+	};
+	static constexpr size_t helix_rtx_cache_limit = 512;
+	std::deque<helix_rtx_cache_entry> helix_rtx_cache;
+	uint64_t helix_rtx_requests = 0;
+	uint64_t helix_rtx_cache_hits = 0;
+	uint64_t helix_rtx_cache_misses = 0;
+	uint64_t helix_rtx_sent = 0;
+	uint64_t helix_rtx_bytes = 0;
+	uint64_t helix_rtx_send_time_total_us = 0;
+	uint64_t helix_rtx_send_time_max_us = 0;
+	uint64_t helix_rtx_send_errors = 0;
+	uint64_t helix_initial_send_errors = 0;
+
+	bool retransmit_cached(uint64_t packet_sequence);
+
 protected:
 	std::atomic_uint32_t pending_bitrate;
 	std::atomic<float> pending_framerate;
@@ -135,6 +159,8 @@ public:
 	        wivrn::vk_bundle &,
 	        const encoder_settings & settings,
 	        uint8_t stream_idx);
+
+	static bool request_retransmission(uint8_t stream_index, uint64_t packet_sequence);
 
 	video_encoder(vk_bundle &, uint8_t stream_idx, uint32_t target_queue, const encoder_settings & settings, std::unique_ptr<idr_handler>, bool async_send);
 	virtual ~video_encoder();

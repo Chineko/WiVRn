@@ -25,6 +25,7 @@
 #include "configuration.h"
 #include "driver/app_pacer.h"
 #include "driver/xrt_cast.h"
+#include "encoder/video_encoder.h"
 #include "server/ipc_server.h"
 #include "utils/load_icon.h"
 #include "utils/method.h"
@@ -967,6 +968,17 @@ void wivrn_session::operator()(const from_headset::get_running_applications &)
 		        });
 	}
 	connection->send_control(std::move(msg));
+}
+
+void wivrn_session::operator()(const from_headset::video_retransmission_request & req)
+{
+	if (!video_encoder::request_retransmission(req.stream_index, req.packet_sequence))
+	{
+		U_LOG_D(
+		        "Helix RTX miss stream=%u sequence=%llu",
+		        req.stream_index,
+		        static_cast<unsigned long long>(req.packet_sequence));
+	}
 }
 
 void wivrn_session::operator()(const from_headset::set_active_application & req)

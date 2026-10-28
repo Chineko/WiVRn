@@ -107,6 +107,9 @@ struct helix_pacing_stats
 std::mutex helix_pacing_stats_mutex;
 std::unordered_map<video_encoder *, helix_pacing_stats> helix_pacing_stats_by_encoder;
 
+std::mutex helix_rtx_registry_mutex;
+std::array<video_encoder *, 3> helix_rtx_encoder_registry{};
+
 uint64_t helix_duration_us(helix_pacing_clock::time_point newer, helix_pacing_clock::time_point older)
 {
 	return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(newer - older).count());
@@ -393,14 +396,100 @@ video_encoder::video_encoder(vk_bundle & vk,
         }
 {
 	assert(this->idr);
+	{
+		std::scoped_lock lock(helix_rtx_registry_mutex);
+		if (stream_idx < helix_rtx_encoder_registry.size())
+			helix_rtx_encoder_registry[stream_idx] = this;
+	}
 	U_LOG_I("Helix pacing telemetry %s stream=%u shard_spacing=%lluus", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));
 }
 
 video_encoder::~video_encoder()
 {
+	{
+		std::scoped_lock lock(helix_rtx_registry_mutex);
+		if (stream_idx < helix_rtx_encoder_registry.size() && helix_rtx_encoder_registry[stream_idx] == this)
+			helix_rtx_encoder_registry[stream_idx] = nullptr;
+	}
 	if (shared_sender)
 		shared_sender->wait_idle(this);
+	uint64_t final_packet_sequence = helix_packet_sequence > 0 ? helix_packet_sequence - 1 : 0;
+	uint64_t rtx_send_time_avg_us = helix_rtx_sent ? helix_rtx_send_time_total_us / helix_rtx_sent : 0;
+	U_LOG_I(
+	        "Helix RTX server summary stream=%u final_packet_sequence=%llu requests=%llu cache_hits=%llu cache_misses=%llu sent=%llu rtx_bytes=%llu rtx_send_time(avg/max)=%llu/%lluus rtx_send_errors=%llu initial_send_errors=%llu cache_entries=%zu",
+	        stream_idx,
+	        static_cast<unsigned long long>(final_packet_sequence),
+	        static_cast<unsigned long long>(helix_rtx_requests),
+	        static_cast<unsigned long long>(helix_rtx_cache_hits),
+	        static_cast<unsigned long long>(helix_rtx_cache_misses),
+	        static_cast<unsigned long long>(helix_rtx_sent),
+	        static_cast<unsigned long long>(helix_rtx_bytes),
+	        static_cast<unsigned long long>(rtx_send_time_avg_us),
+	        static_cast<unsigned long long>(helix_rtx_send_time_max_us),
+	        static_cast<unsigned long long>(helix_rtx_send_errors),
+	        static_cast<unsigned long long>(helix_initial_send_errors),
+	        helix_rtx_cache.size());
 	helix_log_pacing_summary(this);
+}
+
+bool video_encoder::request_retransmission(uint8_t stream_index, uint64_t packet_sequence)
+{
+	std::scoped_lock registry_lock(helix_rtx_registry_mutex);
+	if (stream_index >= helix_rtx_encoder_registry.size())
+		return false;
+	auto * encoder = helix_rtx_encoder_registry[stream_index];
+	if (!encoder)
+		return false;
+	return encoder->retransmit_cached(packet_sequence);
+}
+
+bool video_encoder::retransmit_cached(uint64_t packet_sequence)
+{
+	std::lock_guard lock(mutex);
+	++helix_rtx_requests;
+
+	auto it = std::ranges::find(helix_rtx_cache, packet_sequence, &helix_rtx_cache_entry::packet_sequence);
+	if (it == helix_rtx_cache.end())
+	{
+		++helix_rtx_cache_misses;
+		return false;
+	}
+	++helix_rtx_cache_hits;
+	if (!cnx || !cnx->has_stream())
+	{
+		++helix_rtx_send_errors;
+		return false;
+	}
+
+	// RTX bypasses the fresh-frame 50us shard pacer intentionally so recovery is not
+	// delayed behind a frame burst. Account for this traffic separately so validation
+	// can detect whether urgent RTX sends disturb fresh-frame delivery.
+	to_headset::video_stream_data_shard packet{};
+	packet.stream_item_idx = stream_idx;
+	packet.frame_idx = it->frame_idx;
+	packet.packet_sequence = it->packet_sequence;
+	packet.shard_idx = it->shard_idx;
+	packet.view_info = it->view_info;
+	packet.timing_info = it->timing_info;
+	packet.payload = it->payload;
+
+	auto rtx_send_begin = helix_pacing_clock::now();
+	try
+	{
+		auto payload_bytes = packet.payload.size();
+		cnx->send_stream(std::move(packet));
+		auto send_us = helix_duration_us(helix_pacing_clock::now(), rtx_send_begin);
+		++helix_rtx_sent;
+		helix_rtx_bytes += payload_bytes;
+		helix_rtx_send_time_total_us += send_us;
+		helix_rtx_send_time_max_us = std::max(helix_rtx_send_time_max_us, send_us);
+		return true;
+	}
+	catch (...)
+	{
+		++helix_rtx_send_errors;
+		return false;
+	}
 }
 
 void video_encoder::on_feedback(const from_headset::feedback & feedback)
@@ -540,6 +629,21 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			shard.packet_sequence = helix_packet_sequence++;
 		else
 			shard.packet_sequence = 0;
+
+		if (shard.packet_sequence != 0)
+		{
+			helix_rtx_cache.push_back(helix_rtx_cache_entry{
+			        .packet_sequence = shard.packet_sequence,
+			        .frame_idx = shard.frame_idx,
+			        .shard_idx = shard.shard_idx,
+			        .view_info = shard.view_info,
+			        .timing_info = shard.timing_info,
+			        .payload = std::vector<uint8_t>(begin, next),
+			});
+			while (helix_rtx_cache.size() > helix_rtx_cache_limit)
+				helix_rtx_cache.pop_front();
+		}
+
 		helix_current_frame_bytes += std::distance(begin, next);
 		helix_current_frame_shards++;
 		try
@@ -551,6 +655,7 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 		}
 		catch (...)
 		{
+			++helix_initial_send_errors;
 			// Ignore network errors
 		}
 		++shard.shard_idx;

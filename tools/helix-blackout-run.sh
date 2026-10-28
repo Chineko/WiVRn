@@ -48,11 +48,36 @@ ADB_COUNT=$(adb devices | awk 'NR>1 && $2 == "device" {n++} END {print n+0}')
 ROOT_ID=$(adb shell su -c id 2>/dev/null | tr -d '\r' || true)
 [[ "$ROOT_ID" == *"uid=0"* ]] || fail "Quest root shell is not active"
 
-QUEST_PACKAGE_INFO=$(adb shell dumpsys package "$PACKAGE" 2>/dev/null || true)
-QUEST_VERSION=$(awk -F= '/versionName=/{gsub(/\r/,"",$2); if (!found) {print $2; found=1}}' <<<"$QUEST_PACKAGE_INFO")
-[[ -n "$QUEST_VERSION" ]] || fail "could not read installed $PACKAGE versionName"
-[[ "$QUEST_VERSION" == *"$RUNTIME_SHORT"* ]] \
-    || fail "installed Quest build is '$QUEST_VERSION', expected it to contain $RUNTIME_SHORT"
+# Verify the actual installed APK/native runtime, not Android package versionName.
+# WiVRn's Gradle versionName can legitimately remain 1.0 while the native binary
+# embeds the git-derived runtime identity used in logcat.
+APK_PATH=$(adb shell pm path "$PACKAGE" 2>/dev/null | tr -d '\r' | awk -F: '/base\.apk$/{print $2; exit}')
+[[ -n "$APK_PATH" ]] || fail "could not locate installed base APK for $PACKAGE"
+APK_TMP=$(mktemp --suffix=.apk)
+trap 'rm -f "$APK_TMP"' RETURN
+if ! timeout 45s adb exec-out su -c "cat '$APK_PATH'" >"$APK_TMP"; then
+    rm -f "$APK_TMP"
+    fail "could not read installed APK for native runtime verification"
+fi
+if ! python3 - "$APK_TMP" "$RUNTIME_SHORT" <<'PY'
+import sys, zipfile
+apk, expected = sys.argv[1], sys.argv[2].encode()
+try:
+    with zipfile.ZipFile(apk) as z:
+        libs = [n for n in z.namelist() if n.endswith('.so')]
+        if not libs:
+            raise SystemExit(2)
+        if not any(expected in z.read(name) for name in libs):
+            raise SystemExit(3)
+except zipfile.BadZipFile:
+    raise SystemExit(4)
+PY
+then
+    rm -f "$APK_TMP"
+    fail "installed Quest native libraries do not contain validated runtime id $RUNTIME_SHORT"
+fi
+rm -f "$APK_TMP"
+trap - RETURN
 
 # Do not reuse an unknown in-memory dashboard/server process. The audited harness
 # will launch the verified dashboard binary itself.

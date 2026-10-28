@@ -74,13 +74,15 @@ void scenes::stream::process_packets()
 		        helix_unsequenced_video_packets[stream_idx],
 		        helix_highest_packet_sequence[stream_idx].value_or(0));
 		spdlog::info(
-		        "Helix RTX summary stream={} requests={} arrivals={} useful={} late={} skipped_deadline={} skipped_gap_cap={} pending={} gap_hist(1/2/3-4/5-8/>8)={}/{}/{}/{}/{}",
+		        "Helix RTX summary stream={} requests={} arrivals={} useful={} late={} recovered_frames={} skipped_deadline={} skipped_cross_frame={} skipped_gap_cap={} pending={} gap_hist(1/2/3-4/5-8/>8)={}/{}/{}/{}/{}",
 		        stream_idx,
 		        helix_rtx_requests[stream_idx],
 		        helix_rtx_arrivals[stream_idx],
 		        helix_rtx_arrivals_useful[stream_idx],
 		        helix_rtx_arrivals_late[stream_idx],
+		        helix_rtx_recovered_frames[stream_idx],
 		        helix_rtx_skipped_deadline[stream_idx],
+		        helix_rtx_skipped_cross_frame[stream_idx],
 		        helix_rtx_skipped_gap_cap[stream_idx],
 		        helix_rtx_pending[stream_idx].size(),
 		        helix_rtx_gap_hist[stream_idx][0],
@@ -125,7 +127,10 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 
 	auto now = instance.now();
 	if (shard.view_info)
-		helix_rtx_frame_deadline[idx] = shard.view_info->display_time;
+		helix_rtx_frame_deadline[idx] = helix_rtx_deadline{
+		        .frame_idx = shard.frame_idx,
+		        .display_time = shard.view_info->display_time,
+	};
 
 	if (shard.packet_sequence == 0)
 	{
@@ -138,11 +143,14 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 
 		if (auto pending = helix_rtx_pending[idx].find(shard.packet_sequence); pending != helix_rtx_pending[idx].end())
 		{
-			++helix_rtx_arrivals[idx];
-			if (now < pending->second)
-				++helix_rtx_arrivals_useful[idx];
-			else
-				++helix_rtx_arrivals_late[idx];
+			if (shard.retransmission)
+			{
+				++helix_rtx_arrivals[idx];
+				if (decoders[idx].decoder->accepts_frame(shard.frame_idx) && pending->second == shard.frame_idx)
+					++helix_rtx_arrivals_useful[idx];
+				else
+					++helix_rtx_arrivals_late[idx];
+			}
 			helix_rtx_pending[idx].erase(pending);
 		}
 
@@ -157,11 +165,34 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 					helix_packet_sequence_forward_gap_candidates[idx] += gap;
 					helix_rtx_gap_hist[idx][helix_rtx_gap_bucket(gap)]++;
 
-					auto deadline = helix_rtx_frame_deadline[idx];
-					if (deadline && *deadline > now + helix_rtx_min_remaining_ns)
+					// Only the sequence positions immediately preceding this shard that fit
+					// within shard_idx are provably part of this same frame. Anything
+					// earlier may belong to the previous frame and is intentionally skipped.
+					auto same_frame_missing = std::min<uint64_t>(gap, shard.shard_idx);
+					helix_rtx_skipped_cross_frame[idx] += gap - same_frame_missing;
+
+					bool frame_relevant = decoders[idx].decoder->accepts_frame(shard.frame_idx);
+					bool deadline_ok = true;
+					if (auto deadline = helix_rtx_frame_deadline[idx];
+					    deadline && deadline->frame_idx == shard.frame_idx)
 					{
-						auto request_count = std::min<uint64_t>(gap, helix_rtx_max_requests_per_gap);
-						for (uint64_t sequence = *highest + 1; sequence < *highest + 1 + request_count; ++sequence)
+						deadline_ok = deadline->display_time > now + helix_rtx_min_remaining_ns;
+					}
+
+					if (!frame_relevant || !deadline_ok)
+					{
+						helix_rtx_skipped_deadline[idx] += same_frame_missing;
+					}
+					else if (same_frame_missing > helix_rtx_max_requests_per_gap)
+					{
+						// A frame with more than the bounded RTX budget already missing is
+						// treated as burst-loss territory rather than sending a partial rescue.
+						helix_rtx_skipped_gap_cap[idx] += same_frame_missing;
+					}
+					else if (same_frame_missing > 0)
+					{
+						auto first_sequence = shard.packet_sequence - same_frame_missing;
+						for (uint64_t sequence = first_sequence; sequence < shard.packet_sequence; ++sequence)
 						{
 							try
 							{
@@ -169,7 +200,7 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 								        .stream_index = idx,
 								        .packet_sequence = sequence,
 								});
-								helix_rtx_pending[idx][sequence] = *deadline;
+								helix_rtx_pending[idx][sequence] = shard.frame_idx;
 								++helix_rtx_requests[idx];
 							}
 							catch (const std::exception & e)
@@ -178,12 +209,6 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 								break;
 							}
 						}
-						if (gap > request_count)
-							helix_rtx_skipped_gap_cap[idx] += gap - request_count;
-					}
-					else
-					{
-						helix_rtx_skipped_deadline[idx] += gap;
 					}
 				}
 				highest = shard.packet_sequence;

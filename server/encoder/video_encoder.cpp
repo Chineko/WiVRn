@@ -468,6 +468,7 @@ bool video_encoder::retransmit_cached(uint64_t packet_sequence)
 	packet.stream_item_idx = stream_idx;
 	packet.frame_idx = it->frame_idx;
 	packet.packet_sequence = it->packet_sequence;
+	packet.retransmission = true;
 	packet.shard_idx = it->shard_idx;
 	packet.view_info = it->view_info;
 	packet.timing_info = it->timing_info;
@@ -629,6 +630,7 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			shard.packet_sequence = helix_packet_sequence++;
 		else
 			shard.packet_sequence = 0;
+		shard.retransmission = false;
 
 		if (shard.packet_sequence != 0)
 		{

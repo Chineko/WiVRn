@@ -865,6 +865,8 @@ public:
 	// Monotonic identifier for UDP video shards within stream_item_idx.
 	// Zero means this shard was sent outside the UDP video sequence space.
 	uint64_t packet_sequence;
+	// True only for a server retransmission of an earlier UDP shard.
+	bool retransmission = false;
 	// Identifier of the shard within the frame
 	uint16_t shard_idx;
 

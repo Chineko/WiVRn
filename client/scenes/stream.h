@@ -57,6 +57,12 @@ public:
 	};
 	static const size_t image_buffer_size = 3;
 
+	void helix_note_rtx_frame_recovered(uint8_t stream_index)
+	{
+		if (stream_index < helix_rtx_recovered_frames.size())
+			++helix_rtx_recovered_frames[stream_index];
+	}
+
 	app_launcher apps;
 
 private:
@@ -88,13 +94,20 @@ private:
 	std::array<uint64_t, decoder_count> helix_unsequenced_video_packets{};
 
 	// Helix RTX Slice B: receiver-local request state and validation telemetry.
-	std::array<std::optional<XrTime>, decoder_count> helix_rtx_frame_deadline;
-	std::array<std::map<uint64_t, XrTime>, decoder_count> helix_rtx_pending;
+	struct helix_rtx_deadline
+	{
+		uint64_t frame_idx;
+		XrTime display_time;
+	};
+	std::array<std::optional<helix_rtx_deadline>, decoder_count> helix_rtx_frame_deadline;
+	std::array<std::map<uint64_t, uint64_t>, decoder_count> helix_rtx_pending;
 	std::array<uint64_t, decoder_count> helix_rtx_requests{};
 	std::array<uint64_t, decoder_count> helix_rtx_arrivals{};
 	std::array<uint64_t, decoder_count> helix_rtx_arrivals_useful{};
 	std::array<uint64_t, decoder_count> helix_rtx_arrivals_late{};
+	std::array<uint64_t, decoder_count> helix_rtx_recovered_frames{};
 	std::array<uint64_t, decoder_count> helix_rtx_skipped_deadline{};
+	std::array<uint64_t, decoder_count> helix_rtx_skipped_cross_frame{};
 	std::array<uint64_t, decoder_count> helix_rtx_skipped_gap_cap{};
 	std::array<std::array<uint64_t, 5>, decoder_count> helix_rtx_gap_hist{};
 

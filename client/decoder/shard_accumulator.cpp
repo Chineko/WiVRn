@@ -39,6 +39,7 @@ void shard_set::reset(uint64_t frame_index)
 {
 	min_for_reconstruction = -1;
 	data.clear();
+	received_retransmission = false;
 
 	uint8_t stream_index = feedback.stream_index;
 	feedback = {};
@@ -74,6 +75,8 @@ std::optional<uint16_t> shard_set::insert(data_shard && shard, xr::instance & in
 		data.resize(idx + 1);
 	if (data[idx])
 		return {};
+	if (shard.retransmission)
+		received_retransmission = true;
 	data[idx] = std::move(shard);
 	return idx;
 }
@@ -219,6 +222,12 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 
 	// Try to extract a frame
 	decoder_->frame_completed(current.feedback, *data_shards.front()->view_info);
+
+	if (current.received_retransmission)
+	{
+		if (auto scene = weak_scene.lock())
+			scene->helix_note_rtx_frame_recovered(current.feedback.stream_index);
+	}
 
 	send_feedback(current.feedback);
 

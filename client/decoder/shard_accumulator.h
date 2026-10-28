@@ -50,6 +50,7 @@ public:
 	{
 		size_t min_for_reconstruction = -1;
 		std::vector<std::optional<data_shard>> data;
+		bool received_retransmission = false;
 		void reset(uint64_t frame_index);
 		bool empty() const;
 
@@ -94,6 +95,11 @@ public:
 	}
 
 	void push_shard(wivrn::to_headset::video_stream_data_shard &&);
+
+	bool accepts_frame(uint64_t frame_index) const
+	{
+		return frame_index == current.frame_index() || frame_index == next.frame_index();
+	}
 
 	vk::Sampler sampler()
 	{

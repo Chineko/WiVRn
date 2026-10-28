@@ -804,7 +804,7 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			        .packet_sequence = shard.packet_sequence,
 			        .frame_idx = shard.frame_idx,
 			        .shard_idx = shard.shard_idx,
-			        .send_attempt_ns = os_monotonic_get_ns(),
+			        .send_attempt_ns = static_cast<uint64_t>(os_monotonic_get_ns()),
 			        .view_info = shard.view_info,
 			        .timing_info = shard.timing_info,
 			        .payload = std::vector<uint8_t>(begin, next),

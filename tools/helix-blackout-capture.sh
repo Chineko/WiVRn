@@ -49,12 +49,17 @@ HOST_IP=$(awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$H
 QUEST_TCPDUMP=$(adb shell su -c 'command -v tcpdump 2>/dev/null || which tcpdump 2>/dev/null' | tr -d '\r' | head -n1)
 [[ -n "$QUEST_TCPDUMP" ]] || fail "tcpdump is not available on the rooted Quest; stop here before doing a data run"
 
+# Meta's tcpdump build drops privileges by default. Retain root so packet-socket capture works under Magisk root.
+if ! adb shell su -c "$QUEST_TCPDUMP -Z root -i $QUEST_IF -c 1 -nn" >/dev/null 2>&1; then
+    fail "Quest tcpdump cannot capture on $QUEST_IF even with -Z root; stop here before doing a data run"
+fi
+
 echo "Helix blackout capture"
 echo "  repo:      $ROOT"
 echo "  commit:    $(git -C "$ROOT" rev-parse --short=12 HEAD)"
 echo "  host:      $HOST_IP via $HOST_IF"
 echo "  Quest:     $QUEST_IP via $QUEST_IF"
-echo "  tcpdump:   $QUEST_TCPDUMP"
+echo "  tcpdump:   $QUEST_TCPDUMP (-Z root verified)"
 echo "  output:    $OUT"
 
 {
@@ -97,7 +102,7 @@ LOGCAT_PID=$!
 
 # Rooted Quest interface capture. Header/timing-only snaplen keeps a 5-minute run reasonably small.
 adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.pid $QUEST_TMP.err; \
-    sh -c '$QUEST_TCPDUMP -i $QUEST_IF -s 96 -U -w $QUEST_TMP.pcap \"udp and host $HOST_IP\" \
+    sh -c '$QUEST_TCPDUMP -Z root -i $QUEST_IF -s 96 -U -w $QUEST_TMP.pcap \"udp and host $HOST_IP\" \
     >$QUEST_TMP.err 2>&1 & echo \$! >$QUEST_TMP.pid'" >/dev/null
 
 # Matching host-side capture of the same UDP flow.

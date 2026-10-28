@@ -5,6 +5,7 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 STAMP=$(date +%Y%m%d-%H%M%S)
 OUT=${HELIX_CAPTURE_DIR:-"$HOME/helix-blackout-$STAMP"}
 QUEST_TMP=/data/local/tmp/helix-blackout
+DASHBOARD_PID=""
 
 fail() {
     echo "Helix capture: $*" >&2
@@ -104,7 +105,7 @@ sudo tcpdump -i "$HOST_IF" -s 96 -U -w "$OUT/host.pcap" "udp and host $QUEST_IP"
     >"$OUT/host-tcpdump.txt" 2>&1 &
 HOST_TCPDUMP_PID=$!
 
-cleanup() {
+cleanup_capture() {
     set +e
     kill "$LOGCAT_PID" >/dev/null 2>&1
     sudo kill "$HOST_TCPDUMP_PID" >/dev/null 2>&1
@@ -112,7 +113,31 @@ cleanup() {
     wait "$HOST_TCPDUMP_PID" >/dev/null 2>&1
     adb shell su -c "if [ -f $QUEST_TMP.pid ]; then kill \$(cat $QUEST_TMP.pid) 2>/dev/null; fi" >/dev/null 2>&1
 }
-trap cleanup EXIT INT TERM
+
+cleanup_all() {
+    cleanup_capture
+    if [[ -n "$DASHBOARD_PID" ]]; then
+        kill "$DASHBOARD_PID" >/dev/null 2>&1 || true
+        wait "$DASHBOARD_PID" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup_all EXIT INT TERM
+
+# Launch the already-built dashboard only after capture is armed. No rebuild is required for this diagnostic run.
+DASHBOARD="$ROOT/build-dashboard/server/wivrn-dashboard"
+PREFIX="$ROOT/build-dashboard/dashboard/prefix.sh"
+if pgrep -f "$DASHBOARD" >/dev/null 2>&1; then
+    echo "  dashboard: already running"
+elif [[ -x "$DASHBOARD" && -f "$PREFIX" ]]; then
+    (
+        cd "$ROOT"
+        bash -c 'source build-dashboard/dashboard/prefix.sh && exec build-dashboard/server/wivrn-dashboard'
+    ) >"$OUT/dashboard-stdout.txt" 2>&1 &
+    DASHBOARD_PID=$!
+    echo "  dashboard: launched (pid $DASHBOARD_PID)"
+else
+    echo "  dashboard: existing build not found; launch it manually before starting VR"
+fi
 
 echo
 echo "CAPTURE ARMED. Reproduce the avatar load/unload blackout now."
@@ -120,7 +145,13 @@ echo "When finished, come back here and press Enter once."
 read -r _
 
 echo "Stopping and collecting..."
-cleanup
+cleanup_capture
+
+if [[ -n "$DASHBOARD_PID" ]]; then
+    kill "$DASHBOARD_PID" >/dev/null 2>&1 || true
+    wait "$DASHBOARD_PID" >/dev/null 2>&1 || true
+    DASHBOARD_PID=""
+fi
 trap - EXIT INT TERM
 
 sleep 1

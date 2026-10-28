@@ -48,14 +48,16 @@ Aggregate main-stream result:
 - 6 retransmission requests were emitted
 - all 6 were found in the server cache
 - all 6 were retransmitted successfully
-- all 6 arrived back at the Quest
-- all 6 arrived after their target frame had ceased to be useful
+- all 6 explicit retransmissions arrived back at the Quest
+- none was classified useful for its target frame by the time it arrived
 - 0 frames completed because of RTX
 
 The server confirmed the transport mechanism itself worked:
 
 - stream 1: `requests=6`, `cache_hits=6`, `cache_misses=0`, `sent=6`, `rtx_bytes=8169`, `rtx_send_time(avg/max)=7/19us`, `rtx_send_errors=0`, `initial_send_errors=0`
 - stream 0: `requests=0`, `cache_hits=0`, `cache_misses=0`, `sent=0`, `rtx_send_errors=0`, `initial_send_errors=0`
+
+The zero-frame recovery result proves that this failure class exceeded the tested RTX timing and/or recovery-budget envelope. The logs do not isolate wire RTT as the sole cause: a frame can also become unrecoverable because too many other shards in the same frame or surrounding burst are missing, or because reassembly has already advanced past that frame.
 
 ## Tail-loss accounting
 
@@ -69,17 +71,49 @@ Highest sequence values observed by the Quest before shutdown:
 - stream 0: `1807388`
 - stream 1: `1820950`
 
-This exposes 25 stream-0 and 31 stream-1 sequence positions at the tail that cannot be discovered by forward-gap logic because no later packet exists to reveal them.
+This leaves 25 stream-0 and 31 stream-1 sequence positions after the highest value observed by the Quest. Forward-gap logic cannot classify these because no later packet exists to reveal the gap.
 
-The final-sequence telemetry therefore closed a real observability gap and should be kept.
+Treat these 56 tail positions as presumed missing at teardown, not independently confirmed packet drops: shutdown timing could also hide packets that were late or reordered beyond the final observation point.
+
+The final-sequence telemetry still closes a real observability gap and should be kept.
 
 ## Loss shape
 
-The headline average loss rate is less important than its clustering in this run.
+The distribution is the primary result; the average percentage is secondary.
 
-Counting original UDP sequence positions at the server gives approximately 3,628,394 positions across streams 0 and 1. Accounting for the six RTX duplicates, approximately 866 original positions were not observed by the Quest, or roughly 0.024%.
+Every observed forward gap was greater than eight packets, and most forward missing positions crossed a frame boundary. This is a poor fit for selective retransmission and a much better target for burst-loss recovery such as FEC.
 
-Despite the low average percentage, loss was concentrated in large bursts. Every observed forward gap was greater than eight packets, and most missing positions crossed a frame boundary. This is a poor fit for selective retransmission and a much better target for burst-loss recovery such as FEC.
+For scale only, counting original UDP sequence positions at the server gives approximately 3,628,394 positions across streams 0 and 1. If the 56 teardown-tail positions are treated as missing and the six RTX duplicates are excluded, approximately 866 original positions were not observed by the Quest, or roughly 0.024%. This percentage should not be compared directly with the earlier ~0.06% run as though the workloads were equivalent; the sessions had different duration, workload, and burst structure.
+
+## Host-production versus delivery correlation
+
+The same torture run also contained a separate host-production failure class.
+
+The server logged four paired main-stream frame-production-gap episodes:
+
+- around 17:24:49.9: roughly 43 ms
+- around 17:28:55.95: roughly 56 ms
+- around 17:37:12.58: roughly 66 ms
+- around 17:38:37.19: roughly 46 ms
+
+Clustering Quest `frame ... was not sent` messages into distinct sub-second incidents gives ten client-side incomplete/zero-shard episodes during the run.
+
+Three of those ten client incidents align tightly with host frame-production gaps:
+
+- Quest loss around 17:28:55.998, about 48 ms after the server gap marker
+- Quest loss around 17:37:12.492–12.629, overlapping the server gap within about 90 ms
+- Quest loss around 17:38:37.405–37.409, about 210 ms after the server gap marker
+
+The earlier server frame gap around 17:24:49.9 did not have a tightly aligned Quest incomplete-frame incident; the nearest such client incident was roughly 3.16 s later.
+
+Several substantial Quest loss incidents occurred with no nearby server `helix_note_frame_gap` warning at all, including clusters around 17:24:39–40, 17:25:17, 17:31:28, 17:32:41, and 17:33:32.
+
+This supports two distinct failure classes in the same torture workload:
+
+1. host-side frame-production stalls, which FEC cannot repair because no fresh encoded packets exist to protect
+2. downstream packet/frame delivery loss despite continued host production, which remains a valid FEC target
+
+The current packet-sequence telemetry is summary-only, so it cannot timestamp each forward sequence gap. Therefore this correlation cannot assign every missing packet burst uniquely to host production versus network delivery. It is sufficient, however, to reject the stronger claim that all observed failures are one network-loss mechanism or one host-production mechanism.
 
 ## Pacing impact
 
@@ -111,19 +145,24 @@ Do not respond by tuning the provisional 5 ms threshold repeatedly, increasing t
 
 RTX remains a useful cheap selective mechanism for isolated losses, but this test does not support making RTX the primary Helix recovery mechanism.
 
+The torture run also establishes that host frame-production stalls are a separate unresolved problem. FEC must not be treated as a solution for those stalls.
+
 ## Decision
 
 Keep the bounded selective RTX implementation as a checkpoint, but stop RTX parameter tuning.
 
-Next high-impact mechanism: FEC / burst-loss recovery.
+Proceed with a bounded FEC / burst-loss-recovery slice for the downstream-delivery failure class, while preserving host-production-gap telemetry as a separate line of investigation.
 
 The next FEC slice should:
 
-1. target the observed multi-packet and cross-frame burst-loss failure class
+1. target the observed multi-packet and cross-frame delivery-loss failure class
 2. preserve bounded latency and fresh-video priority
 3. start with a small, measurable protection model rather than a large generic jitter buffer
 4. include enough telemetry to measure protected packets, repair attempts, successful frame completion because of FEC, unrecoverable bursts, and bandwidth overhead
 5. keep FEC and RTX telemetry separate so their value can be measured independently
-6. avoid another decoder or reorder detour unless new evidence points there
+6. preserve timestamped host `frame_gap` events so future runs can attribute recovered/unrecovered incidents to delivery versus production
+7. avoid another decoder or reorder detour unless new evidence points there
+
+Separately, investigate host-production stalls only if they remain frequent in a normal representative workload; do not let the torture test alone trigger a large encoder/rate-control detour.
 
 Do not run another RTX-only headset session before implementing a materially different recovery mechanism.

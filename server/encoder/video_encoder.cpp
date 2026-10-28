@@ -28,7 +28,6 @@
 #include "utils/wivrn_trace.h"
 #include "wivrn_config.h"
 
-#include <atomic>
 #include <array>
 #include <chrono>
 #include <string>
@@ -58,7 +57,6 @@ using helix_pacing_clock = std::chrono::steady_clock;
 constexpr const char * helix_pacing_telemetry_version = "fixed-50us-v1";
 constexpr auto helix_shard_spacing = std::chrono::microseconds(50);
 constexpr size_t helix_pacing_bucket_count = 6;
-std::atomic<uint64_t> helix_video_packet_sequence{0};
 
 size_t helix_send_span_bucket(uint64_t us)
 {
@@ -538,7 +536,10 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			}
 		}
 		shard.payload = {begin, next};
-		shard.packet_sequence = helix_video_packet_sequence.fetch_add(1, std::memory_order_relaxed);
+		if (cnx->has_stream() and not control)
+			shard.packet_sequence = helix_packet_sequence++;
+		else
+			shard.packet_sequence = 0;
 		helix_current_frame_bytes += std::distance(begin, next);
 		helix_current_frame_shards++;
 		try

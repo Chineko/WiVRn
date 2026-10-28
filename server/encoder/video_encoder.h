@@ -122,6 +122,7 @@ private:
 	std::optional<std::chrono::steady_clock::time_point> helix_last_frame_send_started_at;
 	uint64_t helix_current_frame_bytes = 0;
 	uint64_t helix_current_frame_shards = 0;
+	uint64_t helix_packet_sequence = 1;
 
 protected:
 	std::atomic_uint32_t pending_bitrate;

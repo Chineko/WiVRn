@@ -17,7 +17,11 @@ This slice implements the minimum protocol foundation required for deadline-awar
 - optional final-shard `timing_info`
 - payload
 
-The `(stream_item_idx, frame_idx, shard_idx)` tuple already identifies a particular encoded video shard within a session. However, Helix also needs a globally monotonic packet sequence number so the receive path can distinguish packet-order discontinuity from frame-local shard holes and can later measure retransmission behavior precisely across interleaved streams.
+The `(stream_item_idx, frame_idx, shard_idx)` tuple already identifies a particular encoded video shard within a session. Helix also needs monotonic packet sequence information so the receive path can observe packet-order discontinuities and later measure retransmission behavior precisely.
+
+The first implementation used one global sequence namespace across all video streams. Audit before runtime validation found two correctness problems with that design: reliable control/TCP video packets can interleave with UDP video packets, and WiVRn does not globally serialize UDP sends from independent encoder threads. A global sequence allocated before the socket write can therefore report false gaps or false reordering even on a healthy network.
+
+The corrected design uses a monotonic UDP sequence per `stream_item_idx`. Exact transport identity is `(stream_item_idx, packet_sequence)`. Control/fallback video packets use sequence value `0` and are excluded from UDP loss telemetry.
 
 WiVRn serialization reflects aggregate fields, so adding an integral field to the shard changes the wire format automatically. Client and server must therefore be built from the same Helix revision for this work.
 
@@ -27,18 +31,21 @@ Add `uint64_t packet_sequence` to `to_headset::video_stream_data_shard`.
 
 Sender requirements:
 
-- one monotonic counter shared across video streams 0/1/2
-- assign exactly once immediately before first transmission of each video shard
-- sequence values identify original packets; later retransmission of a cached shard must retain the original sequence value
-- control-path video sends and stream-path video sends must use the same sequence namespace
+- one monotonic UDP counter per video stream 0/1/2, starting at 1
+- assign exactly once immediately before first UDP transmission of each video shard
+- sequence value `0` means the shard was sent through the reliable control path or stream fallback and is outside the UDP sequence space
+- sequence values identify original UDP packets; later retransmission of a cached shard must retain the original sequence value
+- do not add a cross-stream hot-path mutex merely to manufacture a global ordering that the socket layer itself does not provide
 - counter wrap is accepted as practically unreachable for this milestone; comparisons must eventually be wrap-safe before relying on arithmetic ordering
 
 Receiver requirements for the first compile/runtime checkpoint:
 
-- packet sequence must be visible before per-stream demultiplexing
+- track packet sequence independently for each video stream
 - do not request retransmission yet
-- add low-noise telemetry sufficient to prove that the client receives the field and to count forward discontinuities, duplicates/old packets, and reordered arrivals
-- do not treat every sequence gap as packet loss: video streams share one sequence namespace, and transport/control routing must be accounted for before classifying a gap as loss
+- keep hot-path logging bounded; summary counters are preferred over one log line per discontinuity
+- count forward discontinuities as `forward_gap_candidates`, not proven loss
+- count sequence values at or below the highest observed value as `late_or_duplicate`; exact distinction is deferred until the bounded missing-sequence state required by RTX is implemented
+- exclude sequence value `0` from UDP discontinuity telemetry while counting those control/fallback video packets separately
 
 ## Slice B — missing-shard request
 

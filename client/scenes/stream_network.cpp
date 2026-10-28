@@ -44,12 +44,17 @@ void scenes::stream::process_packets()
 		}
 	}
 
-	spdlog::info(
-	        "Helix packet sequence summary received={} forward_gap_packets={} reordered_or_duplicate={} highest={}",
-	        helix_packet_sequence_received,
-	        helix_packet_sequence_forward_gaps,
-	        helix_packet_sequence_reordered_or_duplicate,
-	        helix_highest_packet_sequence.value_or(0));
+	for (size_t stream_idx = 0; stream_idx < decoders.size(); ++stream_idx)
+	{
+		spdlog::info(
+		        "Helix UDP packet sequence summary stream={} received={} forward_gap_candidates={} late_or_duplicate={} unsequenced_control_or_fallback={} highest={}",
+		        stream_idx,
+		        helix_packet_sequence_received[stream_idx],
+		        helix_packet_sequence_forward_gap_candidates[stream_idx],
+		        helix_packet_sequence_late_or_duplicate[stream_idx],
+		        helix_unsequenced_video_packets[stream_idx],
+		        helix_highest_packet_sequence[stream_idx].value_or(0));
+	}
 }
 
 void scenes::stream::operator()(to_headset::server_message && message)
@@ -76,36 +81,6 @@ void scenes::stream::operator()(to_headset::server_message && message)
 
 void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 {
-	++helix_packet_sequence_received;
-	if (helix_highest_packet_sequence)
-	{
-		if (shard.packet_sequence > *helix_highest_packet_sequence + 1)
-		{
-			auto first_missing = *helix_highest_packet_sequence + 1;
-			auto gap_count = shard.packet_sequence - first_missing;
-			helix_packet_sequence_forward_gaps += gap_count;
-			spdlog::info(
-			        "Helix packet sequence gap first_missing={} count={} next={} stream={} frame={} shard={}",
-			        first_missing,
-			        gap_count,
-			        shard.packet_sequence,
-			        shard.stream_item_idx,
-			        shard.frame_idx,
-			        shard.shard_idx);
-		}
-		else if (shard.packet_sequence <= *helix_highest_packet_sequence)
-		{
-			++helix_packet_sequence_reordered_or_duplicate;
-		}
-
-		if (shard.packet_sequence > *helix_highest_packet_sequence)
-			helix_highest_packet_sequence = shard.packet_sequence;
-	}
-	else
-	{
-		helix_highest_packet_sequence = shard.packet_sequence;
-	}
-
 	std::shared_lock lock(decoder_mutex);
 	uint8_t idx = shard.stream_item_idx;
 	if (idx >= decoders.size())
@@ -113,6 +88,38 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 		// We don't know (yet?) about this stream, ignore packet
 		return;
 	}
+
+	if (shard.packet_sequence == 0)
+	{
+		++helix_unsequenced_video_packets[idx];
+	}
+	else
+	{
+		++helix_packet_sequence_received[idx];
+		auto & highest = helix_highest_packet_sequence[idx];
+
+		if (highest)
+		{
+			if (shard.packet_sequence > *highest)
+			{
+				auto delta = shard.packet_sequence - *highest;
+				if (delta > 1)
+					helix_packet_sequence_forward_gap_candidates[idx] += delta - 1;
+				highest = shard.packet_sequence;
+			}
+			else
+			{
+				++helix_packet_sequence_late_or_duplicate[idx];
+			}
+		}
+		else
+		{
+			if (shard.packet_sequence > 1)
+				helix_packet_sequence_forward_gap_candidates[idx] += shard.packet_sequence - 1;
+			highest = shard.packet_sequence;
+		}
+	}
+
 	decoders[idx].decoder->push_shard(std::move(shard));
 }
 

@@ -255,7 +255,7 @@ This must remain much smaller than a conventional video jitter buffer.
 
 ## Packet sequence numbers
 
-Add globally monotonic video-packet sequence numbers so the receiver can identify exactly which shard disappeared.
+Add monotonic UDP video-packet sequence numbers per stream so the receiver can identify exact transport discontinuities without imposing cross-stream serialization. Use `(stream_item_idx, packet_sequence)` as the UDP transport identity; reliable control-path video packets remain outside this sequence space.
 
 ## Local monotonic timing
 

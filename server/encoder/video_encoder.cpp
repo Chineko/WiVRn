@@ -429,6 +429,34 @@ video_encoder::~video_encoder()
 	        static_cast<unsigned long long>(helix_rtx_send_errors),
 	        static_cast<unsigned long long>(helix_initial_send_errors),
 	        helix_rtx_cache.size());
+
+	uint64_t gap_report_delay_avg_us =
+	        helix_gap_report_delay_samples
+	                ? helix_gap_report_delay_total_us / helix_gap_report_delay_samples
+	                : 0;
+
+	U_LOG_I(
+	        "Helix gap timing summary stream=%u reports=%llu positions=%llu mapped(full/partial/none)=%llu/%llu/%llu send_span_hist(<1/2/5/10/20/>=20ms)=%llu/%llu/%llu/%llu/%llu/%llu frame_span_hist(1/2/3/4/>4)=%llu/%llu/%llu/%llu/%llu report_delay(avg/max)=%llu/%lluus",
+	        stream_idx,
+	        static_cast<unsigned long long>(helix_gap_reports),
+	        static_cast<unsigned long long>(helix_gap_positions),
+	        static_cast<unsigned long long>(helix_gap_fully_mapped),
+	        static_cast<unsigned long long>(helix_gap_partially_mapped),
+	        static_cast<unsigned long long>(helix_gap_unmapped),
+	        static_cast<unsigned long long>(helix_gap_send_span_hist[0]),
+	        static_cast<unsigned long long>(helix_gap_send_span_hist[1]),
+	        static_cast<unsigned long long>(helix_gap_send_span_hist[2]),
+	        static_cast<unsigned long long>(helix_gap_send_span_hist[3]),
+	        static_cast<unsigned long long>(helix_gap_send_span_hist[4]),
+	        static_cast<unsigned long long>(helix_gap_send_span_hist[5]),
+	        static_cast<unsigned long long>(helix_gap_frame_span_hist[0]),
+	        static_cast<unsigned long long>(helix_gap_frame_span_hist[1]),
+	        static_cast<unsigned long long>(helix_gap_frame_span_hist[2]),
+	        static_cast<unsigned long long>(helix_gap_frame_span_hist[3]),
+	        static_cast<unsigned long long>(helix_gap_frame_span_hist[4]),
+	        static_cast<unsigned long long>(gap_report_delay_avg_us),
+	        static_cast<unsigned long long>(helix_gap_report_delay_max_us));
+
 	helix_log_pacing_summary(this);
 }
 
@@ -441,6 +469,144 @@ bool video_encoder::request_retransmission(uint8_t stream_index, uint64_t packet
 	if (!encoder)
 		return false;
 	return encoder->retransmit_cached(packet_sequence);
+}
+
+void video_encoder::report_gap(const from_headset::video_gap_report & report)
+{
+const uint64_t report_received_ns = os_monotonic_get_ns();
+
+struct event_info
+{
+uint64_t mapped = 0;
+uint64_t send_span_us = 0;
+uint64_t distinct_frames = 0;
+uint64_t report_delay_us = 0;
+const char * mapping = "none";
+} event;
+
+{
+std::scoped_lock registry_lock(helix_rtx_registry_mutex);
+
+if (report.stream_index >= helix_rtx_encoder_registry.size())
+return;
+
+auto * encoder = helix_rtx_encoder_registry[report.stream_index];
+if (!encoder)
+return;
+
+std::lock_guard encoder_lock(encoder->mutex);
+
+++encoder->helix_gap_reports;
+encoder->helix_gap_positions += report.missing_count;
+
+if (report.missing_count == 0 ||
+    report.first_missing_sequence >
+            std::numeric_limits<uint64_t>::max() - (report.missing_count - 1))
+{
+++encoder->helix_gap_unmapped;
+}
+else
+{
+const uint64_t last_missing_sequence =
+        report.first_missing_sequence + report.missing_count - 1;
+
+const helix_rtx_cache_entry * first = nullptr;
+const helix_rtx_cache_entry * last = nullptr;
+std::optional<uint64_t> previous_frame;
+
+for (const auto & entry: encoder->helix_rtx_cache)
+{
+if (entry.packet_sequence < report.first_missing_sequence)
+continue;
+
+if (entry.packet_sequence > last_missing_sequence)
+break;
+
+if (!first)
+first = &entry;
+
+last = &entry;
+++event.mapped;
+
+if (!previous_frame || *previous_frame != entry.frame_idx)
+{
+++event.distinct_frames;
+previous_frame = entry.frame_idx;
+}
+}
+
+if (event.mapped == report.missing_count)
+{
+event.mapping = "full";
+++encoder->helix_gap_fully_mapped;
+}
+else if (event.mapped > 0)
+{
+event.mapping = "partial";
+++encoder->helix_gap_partially_mapped;
+}
+else
+{
+++encoder->helix_gap_unmapped;
+}
+
+if (first && last)
+{
+if (last->send_attempt_ns >= first->send_attempt_ns)
+event.send_span_us =
+        (last->send_attempt_ns - first->send_attempt_ns) / 1000;
+
+if (report_received_ns >= last->send_attempt_ns)
+event.report_delay_us =
+        (report_received_ns - last->send_attempt_ns) / 1000;
+
+++encoder->helix_gap_report_delay_samples;
+encoder->helix_gap_report_delay_total_us += event.report_delay_us;
+encoder->helix_gap_report_delay_max_us =
+        std::max(
+                encoder->helix_gap_report_delay_max_us,
+                event.report_delay_us);
+
+if (event.mapped == report.missing_count)
+{
+size_t send_bucket = 0;
+
+if (event.send_span_us >= 20000)
+send_bucket = 5;
+else if (event.send_span_us >= 10000)
+send_bucket = 4;
+else if (event.send_span_us >= 5000)
+send_bucket = 3;
+else if (event.send_span_us >= 2000)
+send_bucket = 2;
+else if (event.send_span_us >= 1000)
+send_bucket = 1;
+
+++encoder->helix_gap_send_span_hist[send_bucket];
+
+size_t frame_bucket =
+        event.distinct_frames >= 5
+                ? 4
+                : static_cast<size_t>(event.distinct_frames - 1);
+
+++encoder->helix_gap_frame_span_hist[frame_bucket];
+}
+}
+}
+}
+
+U_LOG_I(
+        "Helix gap timing event stream=%u first=%llu count=%llu exposing_sequence=%llu exposing_frame=%llu mapping=%s mapped=%llu send_span=%lluus distinct_frames=%llu report_delay=%lluus",
+        report.stream_index,
+        static_cast<unsigned long long>(report.first_missing_sequence),
+        static_cast<unsigned long long>(report.missing_count),
+        static_cast<unsigned long long>(report.exposing_sequence),
+        static_cast<unsigned long long>(report.exposing_frame_idx),
+        event.mapping,
+        static_cast<unsigned long long>(event.mapped),
+        static_cast<unsigned long long>(event.send_span_us),
+        static_cast<unsigned long long>(event.distinct_frames),
+        static_cast<unsigned long long>(event.report_delay_us));
 }
 
 bool video_encoder::retransmit_cached(uint64_t packet_sequence)
@@ -638,6 +804,7 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			        .packet_sequence = shard.packet_sequence,
 			        .frame_idx = shard.frame_idx,
 			        .shard_idx = shard.shard_idx,
+			        .send_attempt_ns = os_monotonic_get_ns(),
 			        .view_info = shard.view_info,
 			        .timing_info = shard.timing_info,
 			        .payload = std::vector<uint8_t>(begin, next),

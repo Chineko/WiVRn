@@ -716,6 +716,15 @@ struct video_retransmission_request
 	uint64_t packet_sequence;
 };
 
+struct video_gap_report
+{
+	uint8_t stream_index;
+	uint64_t first_missing_sequence;
+	uint64_t missing_count;
+	uint64_t exposing_sequence;
+	uint64_t exposing_frame_idx;
+};
+
 struct set_active_application
 {
 	uint32_t id;
@@ -755,6 +764,7 @@ using packets = std::variant<
         start_app,
         get_running_applications,
         video_retransmission_request,
+        video_gap_report,
         set_active_application,
         hid::input,
         stop_application,

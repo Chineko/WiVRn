@@ -981,6 +981,11 @@ void wivrn_session::operator()(const from_headset::video_retransmission_request 
 	}
 }
 
+void wivrn_session::operator()(const from_headset::video_gap_report & report)
+{
+	video_encoder::report_gap(report);
+}
+
 void wivrn_session::operator()(const from_headset::set_active_application & req)
 {
 	assert(mnd_ipc_server);

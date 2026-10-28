@@ -130,6 +130,7 @@ private:
 		uint64_t packet_sequence;
 		uint64_t frame_idx;
 		uint16_t shard_idx;
+		uint64_t send_attempt_ns;
 		std::optional<to_headset::video_stream_data_shard::view_info_t> view_info;
 		std::optional<to_headset::video_stream_data_shard::timing_info_t> timing_info;
 		std::vector<uint8_t> payload;
@@ -146,6 +147,17 @@ private:
 	uint64_t helix_rtx_send_errors = 0;
 	uint64_t helix_initial_send_errors = 0;
 
+	uint64_t helix_gap_reports = 0;
+	uint64_t helix_gap_positions = 0;
+	uint64_t helix_gap_fully_mapped = 0;
+	uint64_t helix_gap_partially_mapped = 0;
+	uint64_t helix_gap_unmapped = 0;
+	std::array<uint64_t, 6> helix_gap_send_span_hist{};
+	std::array<uint64_t, 5> helix_gap_frame_span_hist{};
+	uint64_t helix_gap_report_delay_samples = 0;
+	uint64_t helix_gap_report_delay_total_us = 0;
+	uint64_t helix_gap_report_delay_max_us = 0;
+
 	bool retransmit_cached(uint64_t packet_sequence);
 
 protected:
@@ -161,6 +173,7 @@ public:
 	        uint8_t stream_idx);
 
 	static bool request_retransmission(uint8_t stream_index, uint64_t packet_sequence);
+	static void report_gap(const from_headset::video_gap_report & report);
 
 	video_encoder(vk_bundle &, uint8_t stream_idx, uint32_t target_queue, const encoder_settings & settings, std::unique_ptr<idr_handler>, bool async_send);
 	virtual ~video_encoder();

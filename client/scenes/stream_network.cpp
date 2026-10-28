@@ -165,6 +165,26 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 					helix_packet_sequence_forward_gap_candidates[idx] += gap;
 					helix_rtx_gap_hist[idx][helix_rtx_gap_bucket(gap)]++;
 
+					try
+					{
+						network_session->send_control(wivrn::from_headset::video_gap_report{
+						        .stream_index = idx,
+						        .first_missing_sequence = *highest + 1,
+						        .missing_count = gap,
+						        .exposing_sequence = shard.packet_sequence,
+						        .exposing_frame_idx = shard.frame_idx,
+						});
+					}
+					catch (const std::exception & e)
+					{
+						spdlog::warn(
+						        "Helix gap report send failed stream={} first={} count={}: {}",
+						        idx,
+						        *highest + 1,
+						        gap,
+						        e.what());
+					}
+
 					// Only the sequence positions immediately preceding this shard that fit
 					// within shard_idx are provably part of this same frame. Anything
 					// earlier may belong to the previous frame and is intentionally skipped.

@@ -855,6 +855,9 @@ public:
 	uint8_t stream_item_idx;
 	// Counter increased for each frame
 	uint64_t frame_idx;
+	// Globally monotonic identifier for each transmitted video shard.
+	// Used by Helix to identify packet discontinuities and, later, exact RTX targets.
+	uint64_t packet_sequence;
 	// Identifier of the shard within the frame
 	uint16_t shard_idx;
 

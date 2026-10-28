@@ -79,6 +79,10 @@ private:
 
 	std::unique_ptr<wivrn_session> network_session;
 	std::thread network_thread;
+	std::optional<uint64_t> helix_highest_packet_sequence;
+	uint64_t helix_packet_sequence_received = 0;
+	uint64_t helix_packet_sequence_forward_gaps = 0;
+	uint64_t helix_packet_sequence_reordered_or_duplicate = 0;
 	thread_safe<to_headset::tracking_control> tracking_control{};
 	std::array<std::atomic<interaction_profile>, 3> interaction_profiles; // left hand, right hand, gamepad
 	std::atomic<bool> interaction_profile_changed = false;

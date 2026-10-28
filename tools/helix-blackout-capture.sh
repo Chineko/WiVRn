@@ -157,11 +157,11 @@ adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.tcpdump.pid $QUEST_TMP.tcpdump
 adb shell su -c 'logcat -c' >/dev/null 2>&1 || true
 CAPTURE_ACTIVE=1
 
-adb shell su -c "sh -c 'echo \$\$ > $QUEST_TMP.tcpdump.pid; exec $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -U -w $QUEST_TMP.pcap -- \"$FILTER\" 2>$QUEST_TMP.tcpdump.err'" >/dev/null 2>&1 &
+adb shell su -c "sh -c 'echo \$\$ > $QUEST_TMP.tcpdump.pid; exec $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -w $QUEST_TMP.pcap -- \"$FILTER\" 2>$QUEST_TMP.tcpdump.err'" >/dev/null 2>&1 &
 QUEST_CAPTURE_ADB_PID=$!
 adb shell su -c "sh -c 'echo \$\$ > $QUEST_TMP.logcat.pid; exec logcat -v threadtime -f $QUEST_TMP.logcat 2>$QUEST_TMP.logcat.err'" >/dev/null 2>&1 &
 QUEST_LOGCAT_ADB_PID=$!
-sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -U -w "$OUT/host.pcap" -- "$FILTER" >"$OUT/host-tcpdump.txt" 2>&1 &
+sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap" -- "$FILTER" >"$OUT/host-tcpdump.txt" 2>&1 &
 HOST_TCPDUMP_PID=$!
 
 sleep 1

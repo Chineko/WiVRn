@@ -10,15 +10,38 @@ from pathlib import Path
 GAP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)\].*Helix gap timing event")
 
 
-def gap_windows(server_log: Path, radius: float):
+def read_metadata(path: Path):
+    values = {}
+    if not path.exists():
+        return values
+    for line in path.read_text(errors="replace").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
+
+
+def parse_offset(raw: str):
+    if not raw or not re.fullmatch(r"[+-]\d{4}", raw):
+        return None
+    sign = 1 if raw[0] == "+" else -1
+    hours = int(raw[1:3])
+    minutes = int(raw[3:5])
+    return dt.timezone(sign * dt.timedelta(hours=hours, minutes=minutes))
+
+
+def gap_windows(server_log: Path, radius: float, tz):
     stamps = []
     for line in server_log.read_text(errors="replace").splitlines():
         m = GAP_RE.search(line)
         if not m:
             continue
-        # WiVRn server log timestamps are local wall-clock timestamps. A naive
-        # datetime.timestamp() intentionally uses the host's local timezone.
-        stamps.append(dt.datetime.fromisoformat(m.group(1)).timestamp())
+        local = dt.datetime.fromisoformat(m.group(1))
+        if tz is not None:
+            local = local.replace(tzinfo=tz)
+        else:
+            local = local.astimezone()
+        stamps.append(local.timestamp())
     if not stamps:
         raise SystemExit("No 'Helix gap timing event' lines found in server-log.txt; not reducing PCAPs blindly.")
 
@@ -79,7 +102,7 @@ def trim_pcap(src: Path, dst: Path, windows):
 
 
 def newest_capture_dir(home: Path):
-    candidates = [p for p in home.glob("helix-blackout-*") if p.is_dir() and (p / "server-log.txt").exists()]
+    candidates = [p for p in home.glob("helix-blackout-*") if p.is_dir() and (p / "server-log.txt").exists() and not p.name.endswith("-reduced")]
     if not candidates:
         raise SystemExit("No ~/helix-blackout-* capture directory containing server-log.txt was found.")
     return max(candidates, key=lambda p: p.stat().st_mtime)
@@ -96,13 +119,15 @@ def main():
     if not server_log.exists():
         raise SystemExit(f"missing {server_log}")
 
-    stamps, windows = gap_windows(server_log, args.radius)
+    metadata = read_metadata(src / "metadata.txt")
+    tz = parse_offset(metadata.get("host_tz_offset", ""))
+    stamps, windows = gap_windows(server_log, args.radius, tz)
+
     out = src.with_name(src.name + "-reduced")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir()
 
-    # Preserve all small textual evidence; only the high-volume PCAPs are trimmed.
     for p in src.iterdir():
         if p.is_file() and p.suffix != ".pcap":
             shutil.copy2(p, out / p.name)
@@ -112,17 +137,19 @@ def main():
         f"gap_events={len(stamps)}",
         f"radius_seconds={args.radius}",
         f"merged_windows={len(windows)}",
+        f"host_tz_offset={metadata.get('host_tz_offset', 'legacy-local-time')}",
     ]
+    display_tz = tz or dt.datetime.now().astimezone().tzinfo
     for i, (start, end) in enumerate(windows, 1):
         summary.append(
-            f"window_{i}={dt.datetime.fromtimestamp(start).isoformat(timespec='milliseconds')}.."
-            f"{dt.datetime.fromtimestamp(end).isoformat(timespec='milliseconds')}"
+            f"window_{i}={dt.datetime.fromtimestamp(start, display_tz).isoformat(timespec='milliseconds')}.."
+            f"{dt.datetime.fromtimestamp(end, display_tz).isoformat(timespec='milliseconds')}"
         )
 
     for name in ("host.pcap", "quest.pcap"):
         p = src / name
-        if not p.exists():
-            summary.append(f"{name}=missing")
+        if not p.exists() or p.stat().st_size < 24:
+            summary.append(f"{name}=missing_or_empty")
             continue
         total, kept = trim_pcap(p, out / name, windows)
         summary.append(f"{name}_packets_total={total}")

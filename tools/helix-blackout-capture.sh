@@ -13,6 +13,7 @@ CAPTURE_ACTIVE=0
 CAPTURE_BUFFER_KIB=16384
 QUEST_MIN_FREE_KB=1572864
 HOST_MIN_FREE_KB=2097152
+MAX_CAPTURE_SECONDS=480
 
 fail() {
     echo "Helix capture: $*" >&2
@@ -188,6 +189,7 @@ TOOL_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
     echo "quest_frequency_mhz_before=$QUEST_FREQ_BEFORE"
     echo "capture_filter=$FILTER"
     echo "capture_buffer_kib=$CAPTURE_BUFFER_KIB"
+    echo "max_capture_seconds=$MAX_CAPTURE_SECONDS"
     echo "quest_free_kb_before=$QUEST_FREE_KB"
     echo "host_free_kb_before=$HOST_FREE_KB"
 } >"$OUT/metadata.txt"
@@ -281,8 +283,10 @@ echo "  scope:     host capture -> Quest wlan capture"
 echo "  output:    $OUT"
 echo
 echo "CAPTURE ARMED. No ADB session remains attached during the workload."
-echo "Reproduce the avatar load/unload blackout now. When finished, press Enter once."
-read -r _
+echo "Reproduce the avatar load/unload blackout now. Press Enter when finished; capture auto-stops after ${MAX_CAPTURE_SECONDS}s."
+if ! read -r -t "$MAX_CAPTURE_SECONDS" _; then
+    echo "Capture duration limit reached; stopping automatically."
+fi
 
 CAPTURE_END_EPOCH_NS=$(date +%s%N)
 echo "capture_end_epoch_ns=$CAPTURE_END_EPOCH_NS" >>"$OUT/metadata.txt"

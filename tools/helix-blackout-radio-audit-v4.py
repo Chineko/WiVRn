@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+import hashlib
+import os
 from pathlib import Path
+import shutil
 import sys
 
 if len(sys.argv) != 2:
     raise SystemExit("usage: helix-blackout-radio-audit-v4.py <final-generated-capture-script>")
 
-text = Path(sys.argv[1]).read_text()
+path = Path(sys.argv[1])
+raw = path.read_bytes()
+text = raw.decode()
 
 
 def one(fragment: str, label: str) -> int:
@@ -55,14 +60,11 @@ positions = [anchors[k] for k in ordered]
 if positions != sorted(positions):
     raise SystemExit("Audit A: exact final observer/sync/detach/workload/reconnect/reduction order is invalid")
 
-# No host->Quest control session exists inside the declared workload interval.
 active = text[anchors["zero_adb"]:anchors["end"]]
 for forbidden in ('adb shell', 'adb exec-out', 'adb devices'):
     if forbidden in active:
         raise SystemExit(f"Audit A: {forbidden!r} remains inside active USB-detached workload")
 
-# The end sync is explicitly outside the measurement interval and before USB
-# reconnect. It is the only deliberate host->Quest probe in that transition.
 post = text[anchors["end"]:anchors["complete"]]
 if 'helix-trace-sync-end' not in post:
     raise SystemExit("Audit A: end sync is not in post-workload/pre-reconnect boundary")
@@ -116,4 +118,17 @@ if text.count('echo 1 > $TRACE_EVENT/enable') != 1:
 if 'echo 1 > $TRACE_INSTANCE/events/enable' in text:
     raise SystemExit("Audit A: all trace events are enabled")
 
-print("Audit A PASS: final generated capture artifact satisfies ordering, measurement isolation, bounds, cleanup, and scope gates.")
+digest = hashlib.sha256(raw).hexdigest()
+expected = os.environ.get("HELIX_AUDIT_EXPECT_SHA256", "")
+if expected and digest != expected:
+    raise SystemExit(f"Audit A: regenerated capture artifact SHA-256 {digest} != audited {expected}")
+
+print(f"Audit A PASS: final generated capture artifact satisfies ordering, measurement isolation, bounds, cleanup, and scope gates. sha256={digest}")
+
+capture_only = os.environ.get("HELIX_AUDIT_CAPTURE_ONLY_OUT", "")
+if capture_only:
+    dst = Path(capture_only).expanduser().resolve()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, dst)
+    print(f"Audit A dry artifact copied to {dst}")
+    raise SystemExit(42)

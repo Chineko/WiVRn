@@ -24,9 +24,9 @@ def one(fragment: str, label: str) -> int:
 
 anchors = {
     "trace_format": one('format lacks required field', 'trace-format fidelity gate'),
-    "trace_probe": one('did not observe the setup UDP probe', 'live tracepoint preflight'),
     "trace_watchdog": one('could not launch Quest trace/capture safety watchdog', 'detached Quest watchdog'),
     "quest_capture_verified": one('detached Quest tcpdump exited before USB detach', 'Quest capture pre-detach gate'),
+    "sync_start": one('did not observe sync-start UDP port', 'trace/PCAP sync-start gate'),
     "host_capture_launch": one('sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"', 'host capture launch'),
     "host_capture_verified": one('host tcpdump did not report an active capture loop before CAPTURE ARMED', 'host capture readiness gate'),
     "usb_prompt": one('USB-DETACHED WORKLOAD MODE', 'USB detach prompt'),
@@ -36,20 +36,20 @@ anchors = {
     "capture_end": one('capture_end_epoch_ns=$CAPTURE_END_EPOCH_NS', 'declared workload end'),
     "workload_complete": one('WORKLOAD COMPLETE', 'USB reconnect boundary'),
     "same_quest": one('reconnected ADB device does not match the Quest used for setup', 'same-Quest reconnect gate'),
+    "sync_end": one('did not observe sync-end UDP port', 'trace/PCAP sync-end gate'),
     "trace_stop": one('could not stop/preserve Quest WLAN trace after USB reconnect', 'trace stop/preserve'),
     "trace_retrieve": one('>"$OUT/quest-wlan-dp-rx-udp.trace"', 'trace retrieval target'),
     "base_reduce": one('python3 "$ROOT/tools/helix-blackout-reduce.py" "$OUT"', 'paired-PCAP reducer invocation'),
 }
 
 order = [
-    anchors["trace_format"], anchors["trace_probe"], anchors["trace_watchdog"],
-    anchors["quest_capture_verified"], anchors["host_capture_launch"], anchors["host_capture_verified"],
-    anchors["usb_prompt"], anchors["zero_adb"], anchors["capture_start"], anchors["armed"],
-    anchors["capture_end"], anchors["workload_complete"], anchors["same_quest"],
-    anchors["trace_stop"], anchors["trace_retrieve"], anchors["base_reduce"],
+    anchors["trace_format"], anchors["trace_watchdog"], anchors["quest_capture_verified"], anchors["sync_start"],
+    anchors["host_capture_launch"], anchors["host_capture_verified"], anchors["usb_prompt"], anchors["zero_adb"],
+    anchors["capture_start"], anchors["armed"], anchors["capture_end"], anchors["workload_complete"],
+    anchors["same_quest"], anchors["sync_end"], anchors["trace_stop"], anchors["trace_retrieve"], anchors["base_reduce"],
 ]
 if order != sorted(order):
-    raise SystemExit("Audit A: final observer/detach/workload/reconnect/reduction ordering is invalid")
+    raise SystemExit("Audit A: final observer/sync/detach/workload/reconnect/reduction ordering is invalid")
 
 active = text[anchors["zero_adb"]:anchors["capture_end"]]
 for forbidden in ('adb shell', 'adb exec-out', 'adb devices'):
@@ -65,7 +65,11 @@ required = (
     'MAX_CAPTURE_SECONDS=480',
     'TRACE_WATCHDOG_SECONDS=570',
     'TRACE_BUFFER_KB=16384',
+    'TRACE_SYNC_START_PORTS="49171,49172,49173"',
+    'TRACE_SYNC_END_PORTS="49271,49272,49273"',
     'quest_driver_trace_event=wlan:dp_rx_udp_pkt',
+    'quest_driver_trace_sync_start_ports=$TRACE_SYNC_START_PORTS',
+    'quest_driver_trace_sync_end_ports=$TRACE_SYNC_END_PORTS',
     'attribution_scope=host_capture_to_quest_driver_trace_to_wlan',
     'quest-wlan-trace-stats.txt',
     'trace-watchdog.pid',
@@ -86,4 +90,4 @@ for forbidden in (
     if forbidden in text:
         raise SystemExit(f"Audit A: runtime/network mutation escaped scope: {forbidden}")
 
-print("Audit A PASS: exact generated capture artifact satisfies lifecycle, isolation, cleanup, and scope gates.")
+print("Audit A PASS: exact generated capture artifact satisfies lifecycle, synchronization, isolation, cleanup, and scope gates.")

@@ -35,10 +35,27 @@ python3 -m py_compile "$PATCH" "$AUDIT" "$RADIO_REDUCER" "$SELFTEST" "$BASE_REDU
 bash -n "$USB_RUN"
 python3 "$SELFTEST"
 
-# Device-format preflight: the synthetic self-test proves reducer logic, while
-# this proves the actual Quest renders dp_rx_udp_pkt text in a form that the
-# exact reducer can parse. This is USB/setup-only and does not reproduce the
-# workload.
+export HELIX_CAPTURE_PATCH="$PATCH"
+export HELIX_CAPTURE_AUDIT="$AUDIT"
+
+# First gate: generate and audit the exact final capture artifact without any
+# Quest/device/runtime interaction. Audit exits 42 intentionally after copying
+# the artifact. This catches generation and Bash-syntax defects before ADB.
+DRY_CAPTURE=$(mktemp "${TMPDIR:-/tmp}/helix-blackout-radio-audited.XXXXXX.sh")
+set +e
+HELIX_AUDIT_CAPTURE_ONLY_OUT="$DRY_CAPTURE" bash "$USB_RUN"
+DRY_RC=$?
+set -e
+[[ "$DRY_RC" -eq 42 ]] || { echo "dry generated-artifact audit did not finish with expected gate code 42 (got $DRY_RC)" >&2; exit 1; }
+[[ -s "$DRY_CAPTURE" ]] || { echo "dry generated capture artifact is missing or empty" >&2; exit 1; }
+AUDITED_SHA=$(sha256sum "$DRY_CAPTURE" | awk '{print $1}')
+[[ "$AUDITED_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "could not compute audited capture SHA-256" >&2; exit 1; }
+unset HELIX_AUDIT_CAPTURE_ONLY_OUT
+export HELIX_AUDIT_EXPECT_SHA256="$AUDITED_SHA"
+
+# Second gate: actual-device format compatibility. The synthetic self-test
+# proves reducer logic; this proves the Quest renders dp_rx_udp_pkt text in the
+# exact form consumed by the active reducer. USB/setup-only, no VR workload.
 ADB_COUNT=$(adb devices | awk 'NR>1 && $2 == "device" {n++} END {print n+0}')
 [[ "$ADB_COUNT" -eq 1 ]] || { echo "expected exactly one connected ADB device for radio parser preflight, found $ADB_COUNT" >&2; exit 1; }
 ADB_SERIAL=$(adb devices | awk 'NR>1 && $2 == "device" {print $1; exit}')
@@ -82,25 +99,6 @@ PYRADIOPARSECHECK
 rm -f "$PARSER_SAMPLE"
 PARSER_SAMPLE=""
 echo "Quest radio parser preflight PASS"
-
-export HELIX_CAPTURE_PATCH="$PATCH"
-export HELIX_CAPTURE_AUDIT="$AUDIT"
-
-DRY_CAPTURE=$(mktemp "${TMPDIR:-/tmp}/helix-blackout-radio-audited.XXXXXX.sh")
-
-# Generate and audit the exact final capture artifact without executing the
-# runtime/device path. Audit exits 42 intentionally after copying the artifact.
-set +e
-HELIX_AUDIT_CAPTURE_ONLY_OUT="$DRY_CAPTURE" bash "$USB_RUN"
-DRY_RC=$?
-set -e
-[[ "$DRY_RC" -eq 42 ]] || { echo "dry generated-artifact audit did not finish with expected gate code 42 (got $DRY_RC)" >&2; exit 1; }
-[[ -s "$DRY_CAPTURE" ]] || { echo "dry generated capture artifact is missing or empty" >&2; exit 1; }
-AUDITED_SHA=$(sha256sum "$DRY_CAPTURE" | awk '{print $1}')
-[[ "$AUDITED_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "could not compute audited capture SHA-256" >&2; exit 1; }
-
-unset HELIX_AUDIT_CAPTURE_ONLY_OUT
-export HELIX_AUDIT_EXPECT_SHA256="$AUDITED_SHA"
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 OUT=${HELIX_CAPTURE_DIR:-"$HOME/helix-blackout-radio-$STAMP"}

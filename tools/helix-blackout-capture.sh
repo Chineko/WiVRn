@@ -66,6 +66,10 @@ quest_executable() {
 }
 
 cleanup_capture() {
+    local had_errexit=0
+    case $- in
+        *e*) had_errexit=1 ;;
+    esac
     set +e
     if [[ "$CAPTURE_ACTIVE" -eq 1 ]]; then
         if adb shell "su -c 'test -f $QUEST_TMP.tcpdump.pid'" >/dev/null 2>&1; then
@@ -82,6 +86,9 @@ cleanup_capture() {
         [[ -n "$HOST_TCPDUMP_PID" ]] && wait "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || true
         [[ -n "$HOST_SAMPLER_PID" ]] && wait "$HOST_SAMPLER_PID" >/dev/null 2>&1 || true
         CAPTURE_ACTIVE=0
+    fi
+    if [[ "$had_errexit" -eq 1 ]]; then
+        set -e
     fi
 }
 

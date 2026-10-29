@@ -57,4 +57,4 @@ out.write_text(s)
 PY
 
 bash -n "$TMP"
-exec bash "$TMP"
+bash "$TMP"

@@ -2,40 +2,41 @@
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-BASE="$ROOT/tools/helix-blackout-usb-detached-run.sh"
+USB_RUN="$ROOT/tools/helix-blackout-usb-detached-run.sh"
 PATCH="$ROOT/tools/helix-blackout-radio-patch-v2.py"
-[[ -f "$BASE" ]] || { echo "missing $BASE" >&2; exit 1; }
-[[ -f "$PATCH" ]] || { echo "missing $PATCH" >&2; exit 1; }
+AUDIT="$ROOT/tools/helix-blackout-radio-audit.py"
+RADIO_REDUCER="$ROOT/tools/helix-blackout-radio-reduce.py"
+BASE_REDUCER="$ROOT/tools/helix-blackout-reduce.py"
 
-TMP=$(mktemp "${TMPDIR:-/tmp}/helix-blackout-radio-run.XXXXXX.sh")
-cleanup() { rm -f "$TMP"; }
-trap cleanup EXIT INT TERM
+for path in "$USB_RUN" "$PATCH" "$AUDIT" "$RADIO_REDUCER" "$BASE_REDUCER"; do
+    [[ -f "$path" ]] || { echo "missing $path" >&2; exit 1; }
+done
 
-python3 - "$BASE" "$TMP" <<'PY'
-from pathlib import Path
-import sys
+python3 -m py_compile "$PATCH" "$AUDIT" "$RADIO_REDUCER" "$BASE_REDUCER"
+bash -n "$USB_RUN"
 
-src = Path(sys.argv[1]).read_text()
-out = Path(sys.argv[2])
-old = '''bash -n "$TMP_CAPTURE"
-bash -n "$TMP_RUN"
+STAMP=$(date +%Y%m%d-%H%M%S)
+OUT=${HELIX_CAPTURE_DIR:-"$HOME/helix-blackout-radio-$STAMP"}
+export HELIX_CAPTURE_DIR="$OUT"
+export HELIX_CAPTURE_PATCH="$PATCH"
+export HELIX_CAPTURE_AUDIT="$AUDIT"
 
-bash "$TMP_RUN"
-'''
-new = '''python3 "$ROOT/tools/helix-blackout-radio-patch-v2.py" "$TMP_CAPTURE"
-bash -n "$TMP_CAPTURE"
-bash -n "$TMP_RUN"
+echo "Helix one-run Quest WLAN attribution"
+echo "  output: $OUT"
+echo "  observer: wlan:dp_rx_udp_pkt + existing paired PCAPs"
+echo "  workload: unchanged WiVRn/avatar reproduction"
+echo "  target: 2-3 characteristic lag events, then stop promptly"
+echo
 
-echo "Quest WLAN datapath trace will be collected in the same USB-detached blackout run."
-echo "Aim for 2-3 characteristic lag events, then end the workload promptly so they remain in the bounded in-RAM trace."
+bash "$USB_RUN"
 
-bash "$TMP_RUN"
-'''
-count = src.count(old)
-if count != 1:
-    raise SystemExit(f"radio wrapper: expected one validation/launch tail, found {count}")
-out.write_text(src.replace(old, new, 1))
-PY
+[[ -d "$OUT" ]] || { echo "radio run completed without expected capture directory: $OUT" >&2; exit 1; }
+python3 "$RADIO_REDUCER" "$OUT"
+# Re-run the existing reducer once so radio-attribution-summary.txt is copied
+# into the reduced bundle/archive produced for upload.
+python3 "$BASE_REDUCER" "$OUT"
 
-bash -n "$TMP"
-bash "$TMP"
+echo
+echo "Radio attribution complete."
+echo "Summary: $OUT/radio-attribution-summary.txt"
+echo "Upload: ${OUT}-reduced.tar.gz"

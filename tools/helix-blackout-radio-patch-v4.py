@@ -95,7 +95,7 @@ TRACE_BUFFER_ACTUAL=$(adb shell "su -c 'cat $TRACE_INSTANCE/buffer_size_kb'" | t
 TRACE_OVERWRITE_ACTUAL=$(adb shell "su -c 'cat $TRACE_INSTANCE/options/overwrite'" | tr -d '\\r[:space:]')
 [[ "$TRACE_OVERWRITE_ACTUAL" == "1" ]] || fail "Quest trace overwrite readback is not enabled"
 adb shell "su -c 'grep -q 1 $TRACE_INSTANCE/tracing_on && grep -q 1 $TRACE_EVENT/enable'" >/dev/null 2>&1 || fail "Quest WLAN trace did not remain armed"
-adb shell "su -c '$QUEST_NOHUP sh -c \"sleep $TRACE_WATCHDOG_SECONDS; test -f $QUEST_TMP.tcpdump.pid && kill -2 \\$(cat $QUEST_TMP.tcpdump.pid) 2>/dev/null || true; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable; rmdir $TRACE_INSTANCE 2>/dev/null || true\" >/dev/null 2>&1 </dev/null & echo \\$! > $QUEST_TMP.trace-watchdog.pid'" >/dev/null 2>&1 || fail "could not launch Quest trace/capture safety watchdog"
+adb shell "su -c '(sleep $TRACE_WATCHDOG_SECONDS; test -f $QUEST_TMP.tcpdump.pid && kill -2 \\$(cat $QUEST_TMP.tcpdump.pid) 2>/dev/null || true; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable; rmdir $TRACE_INSTANCE 2>/dev/null || true) >/dev/null 2>&1 </dev/null & echo \\$! > $QUEST_TMP.trace-watchdog.pid'" >/dev/null 2>&1 || fail "could not launch Quest trace/capture safety watchdog"
 
 '''
 text = text[:launch_pos] + trace_arm + text[launch_pos:]
@@ -177,8 +177,6 @@ fi
     "bounded USB reconnect prompt",
 )
 
-# At workload end, fail closed before declaring the end boundary if sudo
-# credentials were lost. That prevents an interactive teardown race.
 end_marker = '''CAPTURE_END_EPOCH_NS=$(date +%s%N)
 echo "capture_end_epoch_ns=$CAPTURE_END_EPOCH_NS" >>"$OUT/metadata.txt"
 '''

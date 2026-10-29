@@ -83,6 +83,9 @@ out = Path(sys.argv[3])
 def count(text, pattern):
     return len(re.findall(pattern, text, re.M))
 
+def kv(line):
+    return {k: int(v) for k, v in re.findall(r'\b([A-Za-z_]+)=(\d+)\b', line)}
+
 vals = {
     'replay_events': count(server, r'Helix time-diverse replay '),
     'gap_events': count(server, r'Helix gap timing event '),
@@ -95,23 +98,41 @@ vals = {
     'quest_old_shards': count(quest, r'Drop shard for old frame'),
 }
 summary = re.findall(r'^.*Helix time-diverse summary.*$', server, re.M)
+summary_kv = [kv(line) for line in summary]
+vals['td_summary_lines'] = len(summary_kv)
+vals['td_fresh_bytes'] = sum(x.get('fresh_bytes', 0) for x in summary_kv)
+vals['td_replay_bytes'] = sum(x.get('replay_bytes', 0) for x in summary_kv)
+vals['td_replayed_frames'] = sum(x.get('replayed', 0) for x in summary_kv)
+vals['td_send_errors'] = sum(x.get('send_errors', 0) for x in summary_kv)
+vals['td_expired'] = sum(x.get('expired', 0) for x in summary_kv)
 rtx_summary = re.findall(r'^.*Helix RTX.*summary.*$', quest, re.M | re.I)
 
-# The first runtime decision is deliberately narrow: did the mechanism actually
-# execute without a hard recovery-state failure? Improvement is not claimed here.
+summary_integrity = bool(summary_kv) and vals['td_replayed_frames'] == vals['replay_events']
+budget_ok = bool(summary_kv) and vals['td_replay_bytes'] * 5 <= vals['td_fresh_bytes']
+hard_failure = bool(vals['inconsistent_idr'] or vals['idr_timeouts'] or vals['encoder_timeouts'] or vals['td_send_errors'])
+
 if vals['replay_events'] == 0:
     verdict = 'NONDIAGNOSTIC: no time-diverse replay event occurred'
-elif vals['inconsistent_idr'] or vals['idr_timeouts'] or vals['encoder_timeouts']:
-    verdict = 'FAIL: recovery path executed but a hard recovery/encoder failure signal occurred'
+elif not summary_kv:
+    verdict = 'NONDIAGNOSTIC: replay occurred but no time-diverse shutdown summary was captured'
+elif not summary_integrity:
+    verdict = 'NONDIAGNOSTIC: replay event count does not reconcile with shutdown summary'
+elif not budget_ok:
+    verdict = 'FAIL: measured replay payload exceeded the frozen 20% long-run byte budget'
+elif hard_failure:
+    verdict = 'FAIL: recovery path executed but a hard recovery/encoder/send failure signal occurred'
+elif vals['gap_events'] == 0:
+    verdict = 'PROVISIONAL_PASS_EXECUTION_ONLY: replay path executed within budget without hard failures, but no gap event was observed'
 else:
-    verdict = 'PROVISIONAL_PASS: time-diverse path executed without hard failure signals; effectiveness still requires baseline comparison'
+    verdict = 'PROVISIONAL_PASS: replay path executed during a run with gap events, stayed within budget, and showed no hard failure signals; effectiveness still requires event-level/baseline comparison'
 
 lines = [verdict, '']
 lines += [f'{k}={v}' for k, v in vals.items()]
+lines += [f'td_summary_integrity={str(summary_integrity).lower()}', f'td_budget_ok={str(budget_ok).lower()}']
+if vals['td_fresh_bytes']:
+    lines += [f'td_replay_ratio={vals["td_replay_bytes"] / vals["td_fresh_bytes"]:.6f}']
 if summary:
-    lines += ['', 'server_time_diverse_summary:', summary[-1]]
-else:
-    lines += ['', 'warning=no Helix time-diverse summary found; shutdown summary evidence is unavailable']
+    lines += ['', 'server_time_diverse_summaries:', *summary]
 if rtx_summary:
     lines += ['', 'quest_rtx_summary:', rtx_summary[-1]]
 out.write_text('\n'.join(lines) + '\n')

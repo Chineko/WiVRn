@@ -7,20 +7,21 @@ cd "$ROOT"
 
 EXPECTED_BRANCH="helix-bounded-time-diverse-recovery"
 SOURCE_BASE="fa68cb3af0e0dfcb5e683abd951dfe0d2a126336"
-EXPECTED_SELF_BLOB="__SELF_BLOB__"
+SELF_PATH="tools/helix-recover-bounded-runtime.sh"
 
 fail() { echo "Helix salvage gate: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"; }
-for cmd in awk cp date git grep head python3 sort; do need "$cmd"; done
+for cmd in awk cp cut date find git grep head python3 sort; do need "$cmd"; done
 
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "expected branch $EXPECTED_BRANCH"
 git cat-file -e "$SOURCE_BASE^{commit}" 2>/dev/null || fail "frozen source base $SOURCE_BASE is not available locally"
 
-# Verify that the helper being executed is exactly the audited repository artifact.
-SELF_PATH="tools/helix-recover-bounded-runtime.sh"
+# Exact artifact gate: the helper on disk must be byte-identical to the helper
+# committed at the checked-out HEAD. This detects stale/locally edited tooling.
+HEAD_SELF_BLOB=$(git rev-parse "HEAD:$SELF_PATH" 2>/dev/null || true)
+[[ "$HEAD_SELF_BLOB" =~ ^[0-9a-f]{40}$ ]] || fail "could not resolve $SELF_PATH at HEAD"
 SELF_BLOB=$(git hash-object "$SELF_PATH")
-[[ "$EXPECTED_SELF_BLOB" == "__SELF_BLOB__" || "$SELF_BLOB" == "$EXPECTED_SELF_BLOB" ]] || \
-    fail "salvage helper blob differs from audited artifact: $SELF_BLOB"
+[[ "$SELF_BLOB" == "$HEAD_SELF_BLOB" ]] || fail "local salvage helper differs from HEAD artifact"
 
 OUT=${1:-}
 if [[ -z "$OUT" ]]; then

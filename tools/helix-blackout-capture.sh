@@ -287,7 +287,11 @@ if [[ "$QUEST_TCPDUMP_STATUS" != *"listening on $QUEST_IF"* ]]; then
     printf '%s\n' "$QUEST_TCPDUMP_STATUS" >&2
     fail "Quest tcpdump did not report an active capture loop before CAPTURE ARMED"
 fi
-[[ -s "$OUT/host.pcap" ]] || fail "host PCAP header was not created"
+HOST_TCPDUMP_STATUS=$(cat "$OUT/host-tcpdump.txt" 2>/dev/null || true)
+if [[ "$HOST_TCPDUMP_STATUS" != *"listening on $HOST_IF"* ]]; then
+    printf '%s\n' "$HOST_TCPDUMP_STATUS" >&2
+    fail "host tcpdump did not report an active capture loop before CAPTURE ARMED"
+fi
 
 echo "Helix blackout capture"
 echo "  tooling:   ${TOOL_COMMIT:0:12}"

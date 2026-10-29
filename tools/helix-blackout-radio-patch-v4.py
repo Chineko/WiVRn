@@ -88,8 +88,12 @@ launch_marker = 'adb shell "su -c \'$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPT
 launch_pos = text.find(launch_marker)
 if launch_pos < 0 or text.find(launch_marker, launch_pos + 1) >= 0:
     raise SystemExit("radio generator: could not locate unique detached Quest tcpdump launch")
-trace_arm = '''adb shell "su -c 'mkdir $TRACE_INSTANCE; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_INSTANCE/events/enable; echo $TRACE_BUFFER_KB > $TRACE_INSTANCE/buffer_size_kb; echo 1 > $TRACE_INSTANCE/options/overwrite; cat $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format > $QUEST_TMP.trace-format; echo 1 > $TRACE_EVENT/enable; echo 1 > $TRACE_INSTANCE/tracing_on'" >/dev/null 2>&1 || fail "could not arm bounded Quest wlan:dp_rx_udp_pkt trace"
+trace_arm = '''adb shell "su -c 'mkdir $TRACE_INSTANCE && echo 0 > $TRACE_INSTANCE/tracing_on && echo 0 > $TRACE_INSTANCE/events/enable && echo $TRACE_BUFFER_KB > $TRACE_INSTANCE/buffer_size_kb && echo 1 > $TRACE_INSTANCE/options/overwrite && cat $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format > $QUEST_TMP.trace-format && echo 1 > $TRACE_EVENT/enable && echo 1 > $TRACE_INSTANCE/tracing_on'" >/dev/null 2>&1 || fail "could not arm bounded Quest wlan:dp_rx_udp_pkt trace"
 RADIO_TRACE_ARMED=1
+TRACE_BUFFER_ACTUAL=$(adb shell "su -c 'cat $TRACE_INSTANCE/buffer_size_kb'" | tr -d '\\r[:space:]')
+[[ "$TRACE_BUFFER_ACTUAL" == "$TRACE_BUFFER_KB" ]] || fail "Quest trace buffer readback mismatch: requested ${TRACE_BUFFER_KB} KiB/CPU, got ${TRACE_BUFFER_ACTUAL:-unavailable}"
+TRACE_OVERWRITE_ACTUAL=$(adb shell "su -c 'cat $TRACE_INSTANCE/options/overwrite'" | tr -d '\\r[:space:]')
+[[ "$TRACE_OVERWRITE_ACTUAL" == "1" ]] || fail "Quest trace overwrite readback is not enabled"
 adb shell "su -c 'grep -q 1 $TRACE_INSTANCE/tracing_on && grep -q 1 $TRACE_EVENT/enable'" >/dev/null 2>&1 || fail "Quest WLAN trace did not remain armed"
 adb shell "su -c '$QUEST_NOHUP sh -c \"sleep $TRACE_WATCHDOG_SECONDS; test -f $QUEST_TMP.tcpdump.pid && kill -2 \\$(cat $QUEST_TMP.tcpdump.pid) 2>/dev/null || true; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable; rmdir $TRACE_INSTANCE 2>/dev/null || true\" >/dev/null 2>&1 </dev/null & echo \\$! > $QUEST_TMP.trace-watchdog.pid'" >/dev/null 2>&1 || fail "could not launch Quest trace/capture safety watchdog"
 
@@ -149,6 +153,13 @@ del lines[host_start:armed_banner]
 lines[usb_prompt:usb_prompt] = host_block + ["\n"]
 text = "".join(lines)
 
+# The privileged runtime capture and every privileged teardown operation must
+# be noninteractive after the one explicit sudo refresh above.
+text = text.replace('sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"',
+                    'sudo -n tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"')
+text = text.replace('sudo kill -2 "$HOST_TCPDUMP_PID"', 'sudo -n kill -2 "$HOST_TCPDUMP_PID"')
+text = text.replace('sudo kill -15 "$HOST_TCPDUMP_PID"', 'sudo -n kill -15 "$HOST_TCPDUMP_PID"')
+
 replace_once(
     'read -r -p "Press Enter only after USB is unplugged and the Quest is in the normal VR position: " _\n',
     '''if ! read -r -t "$DETACH_PROMPT_SECONDS" -p "Press Enter only after USB is unplugged and the Quest is in the normal VR position: " _; then
@@ -166,14 +177,16 @@ fi
     "bounded USB reconnect prompt",
 )
 
-# Emit the end synchronization marker immediately after the declared workload
-# ends, while Quest tcpdump and the driver trace are still active and before
-# USB reconnect delay can consume trace-ring history. This traffic is outside
-# the measurement interval by construction.
+# At workload end, fail closed before declaring the end boundary if sudo
+# credentials were lost. That prevents an interactive teardown race.
 end_marker = '''CAPTURE_END_EPOCH_NS=$(date +%s%N)
 echo "capture_end_epoch_ns=$CAPTURE_END_EPOCH_NS" >>"$OUT/metadata.txt"
 '''
-end_sync = end_marker + '''python3 - "$QUEST_IP" <<'PYTRACESYNCEND'
+end_sync = '''[[ -n "$SUDO_KEEPALIVE_PID" ]] || fail "sudo keepalive pid is unavailable at workload end"
+kill -0 "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || fail "sudo keepalive exited during workload"
+sudo -n -v >/dev/null 2>&1 || fail "sudo credentials are no longer valid at workload end"
+
+''' + end_marker + '''python3 - "$QUEST_IP" <<'PYTRACESYNCEND'
 import socket, sys, time
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 for port in (49271, 49272, 49273):
@@ -184,9 +197,6 @@ PYTRACESYNCEND
 '''
 replace_once(end_marker, end_sync, "post-workload trace sync marker")
 
-# On reconnect, verify the already-sent tail marker survived, then immediately
-# freeze, preserve, pull and free the trace instance before any other Quest
-# post-state collection.
 replace_once(
     '[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"\n\nsnapshot_quest after\n',
     '''[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"

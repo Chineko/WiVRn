@@ -51,7 +51,8 @@ formats={
 }
 if magic not in formats:
     raise SystemExit(3)
-print(struct.unpack(formats[magic]+"I", h[20:24])[0])
+raw=struct.unpack(formats[magic]+"I", h[20:24])[0]
+print(raw & 0xFFFF)
 PY
 }
 
@@ -135,7 +136,6 @@ HOST_FREE_KB=$(df -Pk "$OUT" | tail -n1 | awk '{print $4}')
 
 sudo -v
 
-# Preflight the exact detached Quest-capture method and validate both PCAP link types.
 QUEST_PRE="$QUEST_TMP-preflight.pcap"
 QUEST_PRE_PID="$QUEST_TMP-preflight.pid"
 QUEST_PRE_ERR="$QUEST_TMP-preflight.err"

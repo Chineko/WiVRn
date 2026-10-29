@@ -12,7 +12,7 @@ BASE_REDUCER="$ROOT/tools/helix-blackout-reduce.py"
 for path in "$USB_RUN" "$PATCH" "$AUDIT" "$RADIO_REDUCER" "$SELFTEST" "$BASE_REDUCER"; do
     [[ -f "$path" ]] || { echo "missing $path" >&2; exit 1; }
 done
-for cmd in python3 bash sha256sum mktemp awk; do
+for cmd in python3 bash sha256sum mktemp awk cp rm tar; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "missing required host command: $cmd" >&2; exit 1; }
 done
 
@@ -59,9 +59,19 @@ bash "$USB_RUN"
 
 [[ -d "$OUT" ]] || { echo "radio run completed without expected capture directory: $OUT" >&2; exit 1; }
 python3 "$RADIO_REDUCER" "$OUT"
-# Re-run the proven reducer once so radio-attribution-summary.txt is copied into
-# the reduced directory/archive that the user uploads.
-python3 "$BASE_REDUCER" "$OUT"
+
+# The proven base reducer already created $OUT-reduced during capture teardown.
+# Add the radio decision summary, but keep the full driver trace only in the raw
+# capture directory so the user-facing upload stays bounded.
+REDUCED="${OUT}-reduced"
+ARCHIVE="${OUT}-reduced.tar.gz"
+[[ -d "$REDUCED" ]] || { echo "expected reduced directory is missing: $REDUCED" >&2; exit 1; }
+[[ -s "$OUT/radio-attribution-summary.txt" ]] || { echo "radio attribution summary is missing" >&2; exit 1; }
+cp "$OUT/radio-attribution-summary.txt" "$REDUCED/radio-attribution-summary.txt"
+rm -f "$REDUCED/quest-wlan-dp-rx-udp.trace"
+rm -f "$ARCHIVE"
+tar -C "$(dirname "$REDUCED")" -czf "$ARCHIVE" "$(basename "$REDUCED")"
+[[ -s "$ARCHIVE" ]] || { echo "reduced radio attribution archive is empty" >&2; exit 1; }
 
 trap - EXIT INT TERM
 rm -f "$DRY_CAPTURE"
@@ -69,4 +79,5 @@ rm -f "$DRY_CAPTURE"
 echo
 echo "Radio attribution complete."
 echo "Summary: $OUT/radio-attribution-summary.txt"
-echo "Upload: ${OUT}-reduced.tar.gz"
+echo "Full driver trace retained locally: $OUT/quest-wlan-dp-rx-udp.trace"
+echo "Upload: $ARCHIVE"

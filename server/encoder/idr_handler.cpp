@@ -127,10 +127,10 @@ default_idr_handler::frame_type default_idr_handler::get_type(uint64_t frame_ind
 	                          [stream_idx, frame_index](wait_idr_feedback & s) {
 		                          if (frame_index < s.idr_id)
 		                          {
-			                          U_LOG_I("IDR frame retargeted on stream %d from %ld to in-flight frame %ld",
+			                          U_LOG_I("IDR frame retargeted on stream %d from %llu to in-flight frame %llu",
 			                                  stream_idx,
-			                                  s.idr_id,
-			                                  frame_index);
+			                                  static_cast<unsigned long long>(s.idr_id),
+			                                  static_cast<unsigned long long>(frame_index));
 			                          s.idr_id = frame_index;
 			                          return frame_type::i;
 		                          }

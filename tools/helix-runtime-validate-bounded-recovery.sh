@@ -99,8 +99,12 @@ CAPTURE_START=$(date +%s)
 echo "capture_start_epoch=$CAPTURE_START" >>"$OUT/metadata.txt"
 (
     cd "$ROOT"
+    # CMake's generated prefix intentionally appends to environment variables
+    # that may be unset. Relax nounset only while sourcing that generated file.
+    set +u
     # shellcheck disable=SC1090
     source "$PREFIX"
+    set -u
     exec "$DASHBOARD"
 ) >"$OUT/dashboard-stdout.txt" 2>&1 &
 DASH_PID=$!

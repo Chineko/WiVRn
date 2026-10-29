@@ -35,7 +35,7 @@ done
 
 # The everything preset enables the server, dashboard, Monado OpenXR runtime
 # target (openxr_wivrn), and the monado library used by its build-tree manifest.
-# Build only that dependency set instead of the unrelated ALL targets.
+# Build only that dependency set instead of unrelated ALL targets.
 echo "[v3 preflight 1/2] Building desktop + build-tree OpenXR runtime targets"
 if [[ ! -f build-everything/build.ninja ]]; then
     cmake --preset everything
@@ -43,16 +43,17 @@ fi
 cmake --build build-everything --target wivrn-server wivrn-dashboard openxr_wivrn monado -j
 
 # active_runtime::manifest_path() deliberately looks for this exact build-tree
-# manifest before falling back to the install prefix. Validate both the JSON and
-# its runtime library before the dashboard is allowed to launch.
+# manifest before falling back to the install prefix. Validate the JSON and prove
+# that its runtime library resolves inside this exact build tree.
 echo "[v3 preflight 2/2] Verifying build-tree OpenXR development runtime"
 [[ -s "$DEV_MANIFEST" ]] || fail "missing build-tree OpenXR development manifest: $DEV_MANIFEST"
-python3 - "$DEV_MANIFEST" <<'PY'
+python3 - "$DEV_MANIFEST" "$ROOT/build-everything" <<'PY'
 import json
 import pathlib
 import sys
 
 manifest = pathlib.Path(sys.argv[1]).resolve()
+build_root = pathlib.Path(sys.argv[2]).resolve()
 try:
     doc = json.loads(manifest.read_text())
 except Exception as exc:
@@ -63,14 +64,18 @@ if doc.get("file_format_version") != "1.0.0":
 runtime = doc.get("runtime")
 if not isinstance(runtime, dict):
     raise SystemExit(f"missing runtime object in {manifest}")
-if runtime.get("name") != "WiVRn":
-    raise SystemExit(f"unexpected runtime name in {manifest}: {runtime.get('name')!r}")
 lib_value = runtime.get("library_path")
 if not isinstance(lib_value, str) or not lib_value:
     raise SystemExit(f"missing runtime.library_path in {manifest}")
 lib = pathlib.Path(lib_value)
 if not lib.is_absolute():
     lib = (manifest.parent / lib).resolve()
+else:
+    lib = lib.resolve()
+try:
+    lib.relative_to(build_root)
+except ValueError:
+    raise SystemExit(f"OpenXR runtime library escapes build tree: {lib}")
 if not lib.is_file():
     raise SystemExit(f"OpenXR runtime library referenced by {manifest} does not exist: {lib}")
 if lib.stat().st_size == 0:

@@ -355,8 +355,8 @@ def main():
         raise SystemExit("Missing decisive capture(s): " + ", ".join(missing) + ". Use --allow-missing-capture only for historical/non-decisive runs.")
 
     decision_reasons = []
-    if metadata.get("wifi_path_stable") != "true":
-        decision_reasons.append("Quest BSSID/6-GHz path was not proven stable for the full run")
+    if metadata.get("wifi_endpoint_state_consistent") != "true":
+        decision_reasons.append("Quest start/end BSSID or 6-GHz endpoint state differed or was unavailable")
 
     quest_offset = quest_mad = None
     alignment_matches = 0

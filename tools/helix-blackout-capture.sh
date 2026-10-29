@@ -282,10 +282,10 @@ sleep 1
 kill -0 "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || fail "host tcpdump exited before CAPTURE ARMED"
 kill -0 "$HOST_SAMPLER_PID" >/dev/null 2>&1 || fail "host sampler exited before CAPTURE ARMED"
 adb shell "su -c 'kill -0 \$(cat $QUEST_TMP.tcpdump.pid)'" >/dev/null 2>&1 || fail "detached Quest tcpdump exited before CAPTURE ARMED"
-QUEST_PCAP_BYTES=$(adb shell "su -c 'wc -c < $QUEST_TMP.pcap'" 2>/dev/null | tr -d '\r ' || echo 0)
-if [[ ! "$QUEST_PCAP_BYTES" =~ ^[0-9]+$ || "$QUEST_PCAP_BYTES" -lt 24 ]]; then
-    adb shell "su -c 'cat $QUEST_TMP.tcpdump.err 2>/dev/null || true'" >&2 || true
-    fail "Quest PCAP header was not created"
+QUEST_TCPDUMP_STATUS=$(adb shell "su -c 'cat $QUEST_TMP.tcpdump.err 2>/dev/null || true'" | tr -d '\r')
+if [[ "$QUEST_TCPDUMP_STATUS" != *"listening on $QUEST_IF"* ]]; then
+    printf '%s\n' "$QUEST_TCPDUMP_STATUS" >&2
+    fail "Quest tcpdump did not report an active capture loop before CAPTURE ARMED"
 fi
 [[ -s "$OUT/host.pcap" ]] || fail "host PCAP header was not created"
 

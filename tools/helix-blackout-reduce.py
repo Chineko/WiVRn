@@ -120,7 +120,8 @@ def pcap_info(header: bytes):
     if magic not in formats:
         raise ValueError(f"unsupported capture format/magic {magic.hex()} (expected classic PCAP)")
     endian, scale = formats[magic]
-    linktype = struct.unpack(endian + "I", header[20:24])[0]
+    raw_linktype = struct.unpack(endian + "I", header[20:24])[0]
+    linktype = raw_linktype & 0xFFFF
     return endian, scale, linktype
 
 

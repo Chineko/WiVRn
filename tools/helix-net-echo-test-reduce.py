@@ -75,10 +75,10 @@ def main():
         raise SystemExit("no echoes received")
 
     # Cross-device realtime clocks have an unknown constant offset. Subtracting
-    # a low percentile baseline makes changes in each one-way component useful.
+    # a low-percentile baseline makes changes in each one-way component useful.
     rtt_vals = [r[5] - r[1] for r in echoes]
-    forward_vals = [(r[3] - (r[2] if r[7] & REC_TX_TS else r[1])) for r in echoes]
-    reverse_vals = [(r[5] - r[4]) for r in echoes]
+    forward_vals = [r[3] - (r[2] if r[7] & REC_TX_TS else r[1]) for r in echoes]
+    reverse_vals = [r[5] - r[4] for r in echoes]
     quest_proc_vals = [r[4] - r[3] for r in echoes]
     txq_vals = [r[2] - r[1] for r in txrows]
 
@@ -90,7 +90,7 @@ def main():
 
     enriched = []
     for r in echoes:
-        seq, hs, htx, qrx, qtx, hrx, send_result, flags = r
+        seq, hs, htx, qrx, qtx, hrx, _send_result, flags = r
         rtt_ex = ms((hrx - hs) - rtt_base)
         fwd_raw = qrx - (htx if flags & REC_TX_TS else hs)
         fwd_ex = ms(fwd_raw - fwd_base)
@@ -111,8 +111,7 @@ def main():
         start = i
         while i + 1 < len(enriched) and enriched[i + 1][0] == enriched[i][0] + 1 and enriched[i + 1][1] >= 15.0:
             i += 1
-        end = i
-        block = enriched[start:end + 1]
+        block = enriched[start:i + 1]
         peak = max(block, key=lambda x: x[1])
         med_fwd = statistics.median(x[2] for x in block)
         med_rev = statistics.median(x[3] for x in block)
@@ -132,9 +131,15 @@ def main():
         else:
             cls = "mixed_or_unresolved"
         events.append({
-            "start": block[0][0], "end": block[-1][0], "count": len(block),
-            "peak_rtt": peak[1], "med_fwd": med_fwd, "med_rev": med_rev,
-            "med_proc": med_proc, "med_txq": med_txq, "class": cls,
+            "start": block[0][0],
+            "end": block[-1][0],
+            "count": len(block),
+            "peak_rtt": peak[1],
+            "med_fwd": med_fwd,
+            "med_rev": med_rev,
+            "med_proc": med_proc,
+            "med_txq": med_txq,
+            "class": cls,
         })
         i += 1
 
@@ -162,6 +167,7 @@ def main():
     if quest_status.get("echo_send_errors", "1") != "0":
         integrity.append("Quest echo send errors were reported")
 
+    max_txq_text = "na" if max_txq is None else f"{max_txq:.3f}"
     summary = [
         f"source={src}",
         "experiment=bidirectional_low_load_udp_echo_localization",
@@ -178,7 +184,7 @@ def main():
         f"max_forward_excess_ms={max_fwd:.3f}",
         f"max_reverse_excess_ms={max_rev:.3f}",
         f"max_quest_processing_excess_ms={max_proc:.3f}",
-        f"max_host_tx_queue_excess_ms={'na' if max_txq is None else f'{max_txq:.3f}'}",
+        f"max_host_tx_queue_excess_ms={max_txq_text}",
         f"samples_over_15ms_rtt_excess={len(hot)}",
         f"stall_event_count={len(events)}",
         f"wifi_endpoint_state_consistent={meta.get('wifi_endpoint_state_consistent', 'unknown')}",
@@ -187,23 +193,32 @@ def main():
     for n, reason in enumerate(integrity, 1):
         summary.append(f"decision_blocker_{n}={reason}")
     for n, e in enumerate(sorted(events, key=lambda x: x["peak_rtt"], reverse=True)[:20], 1):
+        med_txq_text = "na" if e["med_txq"] is None else f"{e['med_txq']:.3f}"
         summary.append(
             f"event_{n}=start:{e['start']} end:{e['end']} count:{e['count']} "
             f"peak_rtt_excess_ms:{e['peak_rtt']:.3f} median_forward_excess_ms:{e['med_fwd']:.3f} "
             f"median_reverse_excess_ms:{e['med_rev']:.3f} median_quest_processing_excess_ms:{e['med_proc']:.3f} "
-            f"median_host_tx_queue_excess_ms:{'na' if e['med_txq'] is None else f'{e['med_txq']:.3f}'} "
-            f"classification:{e['class']}"
+            f"median_host_tx_queue_excess_ms:{med_txq_text} classification:{e['class']}"
         )
 
     (src / "reduction-summary.txt").write_text("\n".join(summary) + "\n")
     with (src / "timeline.csv").open("w") as f:
         f.write("seq,rtt_excess_ms,forward_excess_ms,reverse_excess_ms,quest_processing_excess_ms,host_tx_queue_excess_ms\n")
         for seq, rtt, fwd, rev, proc, txq in enriched:
-            f.write(f"{seq},{rtt:.6f},{fwd:.6f},{rev:.6f},{proc:.6f},{'' if txq is None else f'{txq:.6f}'}\n")
+            txq_text = "" if txq is None else f"{txq:.6f}"
+            f.write(f"{seq},{rtt:.6f},{fwd:.6f},{rev:.6f},{proc:.6f},{txq_text}\n")
 
     reduced = src.with_name(src.name + "-reduced")
     reduced.mkdir(exist_ok=True)
-    for name in ("metadata.txt", "host-status.txt", "host-stderr.txt", "quest-status.txt", "quest-stderr.txt", "reduction-summary.txt", "timeline.csv"):
+    for name in (
+        "metadata.txt",
+        "host-status.txt",
+        "host-stderr.txt",
+        "quest-status.txt",
+        "quest-stderr.txt",
+        "reduction-summary.txt",
+        "timeline.csv",
+    ):
         p = src / name
         if p.exists():
             (reduced / name).write_bytes(p.read_bytes())

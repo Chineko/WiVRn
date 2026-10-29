@@ -21,12 +21,20 @@ TRACE_RE = re.compile(
 TRACE_ALIGN_MIN_MATCHES = 100
 TRACE_ALIGN_MAX_MAD = 0.010
 TRACE_LOOKUP_SLOP = 0.020
+QUEST_SEARCH_SLOP = 0.250
 QUEST_LOOKUP_SLOP = 0.100
+LOCAL_CONTEXT_SECONDS = 0.500
+MIN_LOCAL_UNIQUE_MATCHES = 50
+MIN_LOCAL_MATCH_RATIO = 0.90
 MIN_BASELINE_PACKETS = 50
 MIN_BASELINE_TRACE_RATIO = 0.90
 MIN_MISSING_PACKETS = 10
 DRIVER_PRESENT_DECISIVE_RATIO = 0.80
 DRIVER_ABSENT_DECISIVE_RATIO = 0.10
+DECISIVE_CLASSES = {
+    "quest_lower_receive_path_after_dp_rx_udp_pkt",
+    "before_dp_rx_udp_pkt_ap_rf_radio_firmware_or_earlier_driver",
+}
 
 
 def driver_key(frame: bytes, host_ip: str, quest_ip: str):
@@ -149,7 +157,8 @@ def main():
     server_log = src / "server-log.txt"
 
     blockers = []
-    for p in (host_pcap, quest_pcap, trace_path, format_path, stats_path, server_log):
+    required = (host_pcap, quest_pcap, trace_path, format_path, stats_path, server_log)
+    for p in required:
         if not p.exists() or p.stat().st_size == 0:
             blockers.append(f"missing_or_empty:{p.name}")
     if not host_ip or not quest_ip:
@@ -177,18 +186,17 @@ def main():
     trace_offset = trace_mad = None
     trace_align_matches = 0
     quest_offset = None
-    if not blockers or all(x.startswith("trace_format_missing:") is False for x in blockers):
-        if trace_records and quest_pcap.exists() and host_ip and quest_ip:
-            trace_offset, trace_mad, trace_align_matches = align_trace_to_quest(trace_records, quest_pcap, host_ip, quest_ip)
-            if trace_offset is None:
-                blockers.append(f"trace_alignment_matches:{trace_align_matches}<{TRACE_ALIGN_MIN_MATCHES}")
-            elif trace_mad is None or trace_mad > TRACE_ALIGN_MAX_MAD:
-                blockers.append(f"trace_alignment_mad:{trace_mad}")
-        if host_pcap.exists() and quest_pcap.exists() and host_ip and quest_ip:
-            try:
-                quest_offset, _qmad, _qm = base.derive_quest_clock_offset(host_pcap, quest_pcap, host_ip, quest_ip)
-            except SystemExit as exc:
-                blockers.append(f"quest_pcap_alignment:{exc}")
+    if trace_records and quest_pcap.exists() and host_ip and quest_ip:
+        trace_offset, trace_mad, trace_align_matches = align_trace_to_quest(trace_records, quest_pcap, host_ip, quest_ip)
+        if trace_offset is None:
+            blockers.append(f"trace_alignment_matches:{trace_align_matches}<{TRACE_ALIGN_MIN_MATCHES}")
+        elif trace_mad is None or trace_mad > TRACE_ALIGN_MAX_MAD:
+            blockers.append(f"trace_alignment_mad:{trace_mad}")
+    if host_pcap.exists() and quest_pcap.exists() and host_ip and quest_ip:
+        try:
+            quest_offset, _qmad, _qm = base.derive_quest_clock_offset(host_pcap, quest_pcap, host_ip, quest_ip)
+        except SystemExit as exc:
+            blockers.append(f"quest_pcap_alignment:{exc}")
 
     overruns, dropped = trace_stats(stats_path)
     if dropped and any(x != 0 for x in dropped):
@@ -204,40 +212,58 @@ def main():
         mapped_trace_last = trace_records[-1][0] + trace_offset
 
         for idx, event in enumerate(mapped_events, 1):
-            start = event["first_send_epoch"] - 0.005
-            end = event["last_send_epoch"] + 0.005
-            if start < mapped_trace_first - 0.020 or end > mapped_trace_last + 0.020:
-                blockers.append(f"event_{idx}:outside_retained_driver_trace")
+            event_start = event["first_send_epoch"] - 0.005
+            event_end = event["last_send_epoch"] + 0.005
+            context_start = event_start - LOCAL_CONTEXT_SECONDS
+            context_end = event_end + LOCAL_CONTEXT_SECONDS
+            if context_start < mapped_trace_first - 0.020 or context_end > mapped_trace_last + 0.020:
+                blockers.append(f"event_{idx}:surrounding_context_outside_retained_driver_trace")
                 continue
 
-            host_rows = collect_pcap_window(host_pcap, start, end, host_ip, quest_ip)
-            quest_rows = collect_pcap_window(
+            host_context = collect_pcap_window(host_pcap, context_start, context_end, host_ip, quest_ip)
+            quest_context = collect_pcap_window(
                 quest_pcap,
-                start + quest_offset - QUEST_LOOKUP_SLOP,
-                end + quest_offset + QUEST_LOOKUP_SLOP,
+                context_start + quest_offset - QUEST_SEARCH_SLOP,
+                context_end + quest_offset + QUEST_SEARCH_SLOP,
                 host_ip,
                 quest_ip,
             )
+            local = base.correlate_window(
+                [(ts, fp) for ts, fp, _key in host_context],
+                [(ts, fp) for ts, fp, _key in quest_context],
+                quest_offset,
+            )
+            if local["unique_matches"] < MIN_LOCAL_UNIQUE_MATCHES:
+                blockers.append(f"event_{idx}:local_unique_matches:{local['unique_matches']}<{MIN_LOCAL_UNIQUE_MATCHES}")
+            if local["match_ratio"] < MIN_LOCAL_MATCH_RATIO:
+                blockers.append(f"event_{idx}:local_match_ratio:{local['match_ratio']:.3f}<{MIN_LOCAL_MATCH_RATIO:.2f}")
+            local_q_offset = local["local_offset"]
+
             quest_fp_times = collections.defaultdict(list)
-            for qts, fp, _key in quest_rows:
+            for qts, fp, _key in quest_context:
                 quest_fp_times[fp].append(qts)
 
             baseline = baseline_trace = missing = missing_trace = 0
-            for hts, fp, key in host_rows:
-                predicted_q = hts + quest_offset
+            for hts, fp, key in host_context:
+                predicted_q = hts + local_q_offset
                 q_present = has_time(quest_fp_times.get(fp), predicted_q, QUEST_LOOKUP_SLOP)
                 predicted_trace = predicted_q - trace_offset
                 t_present = has_time(trace_times_by_key.get(key), predicted_trace, TRACE_LOOKUP_SLOP)
-                if q_present:
+                inside_event = event_start <= hts <= event_end
+                if inside_event:
+                    if not q_present:
+                        missing += 1
+                        missing_trace += int(t_present)
+                elif q_present:
                     baseline += 1
                     baseline_trace += int(t_present)
-                else:
-                    missing += 1
-                    missing_trace += int(t_present)
 
             baseline_ratio = baseline_trace / baseline if baseline else 0.0
             missing_trace_ratio = missing_trace / missing if missing else None
-            event_results.append((idx, baseline, baseline_trace, baseline_ratio, missing, missing_trace, missing_trace_ratio))
+            event_results.append(
+                (idx, local["unique_matches"], local["match_ratio"], local_q_offset,
+                 baseline, baseline_trace, baseline_ratio, missing, missing_trace, missing_trace_ratio)
+            )
             if baseline < MIN_BASELINE_PACKETS:
                 blockers.append(f"event_{idx}:driver_baseline_packets:{baseline}<{MIN_BASELINE_PACKETS}")
             elif baseline_ratio < MIN_BASELINE_TRACE_RATIO:
@@ -245,10 +271,15 @@ def main():
             if missing < MIN_MISSING_PACKETS:
                 blockers.append(f"event_{idx}:quest_missing_packets:{missing}<{MIN_MISSING_PACKETS}")
 
-    decisive_results = [r for r in event_results if r[1] >= MIN_BASELINE_PACKETS and r[3] >= MIN_BASELINE_TRACE_RATIO and r[4] >= MIN_MISSING_PACKETS]
+    decisive_results = [
+        r for r in event_results
+        if r[1] >= MIN_LOCAL_UNIQUE_MATCHES and r[2] >= MIN_LOCAL_MATCH_RATIO
+        and r[4] >= MIN_BASELINE_PACKETS and r[6] >= MIN_BASELINE_TRACE_RATIO
+        and r[7] >= MIN_MISSING_PACKETS
+    ]
     classification = "non_decisive"
     if decisive_results and not blockers:
-        ratios = [r[6] for r in decisive_results if r[6] is not None]
+        ratios = [r[9] for r in decisive_results if r[9] is not None]
         if ratios and all(r >= DRIVER_PRESENT_DECISIVE_RATIO for r in ratios):
             classification = "quest_lower_receive_path_after_dp_rx_udp_pkt"
         elif ratios and all(r <= DRIVER_ABSENT_DECISIVE_RATIO for r in ratios):
@@ -256,6 +287,7 @@ def main():
         else:
             classification = "mixed_driver_visibility"
 
+    decision_capable = not blockers and classification in DECISIVE_CLASSES
     lines = [
         f"source={src}",
         f"trace_event=wlan:dp_rx_udp_pkt",
@@ -267,13 +299,16 @@ def main():
         f"trace_dropped_samples={','.join(map(str, dropped)) if dropped else 'unavailable'}",
         f"mapped_gap_events={len(mapped_events)}",
     ]
-    for idx, baseline, baseline_trace, baseline_ratio, missing, missing_trace, missing_ratio in event_results:
+    for row in event_results:
+        idx, unique_matches, local_match, local_offset, baseline, baseline_trace, baseline_ratio, missing, missing_trace, missing_ratio = row
         lines.append(
-            f"event_{idx}=baseline_packets:{baseline} baseline_trace:{baseline_trace} baseline_ratio:{baseline_ratio:.6f} "
-            f"missing_at_wlan:{missing} missing_seen_in_driver:{missing_trace} "
-            f"missing_driver_ratio:{'unavailable' if missing_ratio is None else f'{missing_ratio:.6f}'}"
+            f"event_{idx}=local_unique_matches:{unique_matches} local_match_ratio:{local_match:.6f} "
+            f"local_quest_offset:{local_offset:.9f} baseline_packets:{baseline} baseline_trace:{baseline_trace} "
+            f"baseline_trace_ratio:{baseline_ratio:.6f} missing_at_wlan:{missing} "
+            f"missing_seen_in_driver:{missing_trace} missing_driver_ratio:"
+            f"{'unavailable' if missing_ratio is None else f'{missing_ratio:.6f}'}"
         )
-    lines.append(f"radio_decision_capable={'true' if not blockers and classification != 'non_decisive' else 'false'}")
+    lines.append(f"radio_decision_capable={'true' if decision_capable else 'false'}")
     lines.append(f"radio_classification={classification}")
     for i, blocker in enumerate(blockers, 1):
         lines.append(f"radio_decision_blocker_{i}={blocker}")

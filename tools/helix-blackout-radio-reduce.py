@@ -76,6 +76,15 @@ def parse_trace(path: Path):
     return out
 
 
+def pcap_port_pairs(path: Path, host_ip: str, quest_ip: str):
+    pairs = set()
+    for _ts, frame, *_ in base.iter_pcap(path):
+        key = driver_key(frame, host_ip, quest_ip)
+        if key is not None:
+            pairs.add((key[1], key[2]))
+    return pairs
+
+
 def signature_map(records):
     result = collections.defaultdict(list)
     for i in range(1, len(records) - 1):
@@ -169,9 +178,16 @@ def main():
         if field not in fmt:
             blockers.append(f"trace_format_missing:{field}")
 
-    trace_records = parse_trace(trace_path) if trace_path.exists() else []
+    port_pairs = set()
+    if quest_pcap.exists() and host_ip and quest_ip:
+        port_pairs = pcap_port_pairs(quest_pcap, host_ip, quest_ip)
+    if not port_pairs:
+        blockers.append("no_pc_to_quest_udp_port_pairs")
+
+    raw_trace_records = parse_trace(trace_path) if trace_path.exists() else []
+    trace_records = [r for r in raw_trace_records if (r[1][1], r[1][2]) in port_pairs]
     if not trace_records:
-        blockers.append("no_parseable_dp_rx_udp_pkt_records")
+        blockers.append("no_parseable_driver_records_for_pc_to_quest_udp_ports")
 
     tz = base.parse_offset(metadata.get("host_tz_offset", ""))
     capture_start_ns = base.epoch_ns(metadata, "capture_start_epoch_ns")
@@ -291,7 +307,9 @@ def main():
     lines = [
         f"source={src}",
         f"trace_event=wlan:dp_rx_udp_pkt",
-        f"trace_records={len(trace_records)}",
+        f"pc_to_quest_udp_port_pairs={','.join(f'{a}:{b}' for a, b in sorted(port_pairs)) if port_pairs else 'unavailable'}",
+        f"trace_records_all_udp={len(raw_trace_records)}",
+        f"trace_records_pc_port_pairs={len(trace_records)}",
         f"trace_to_quest_pcap_offset_seconds={trace_offset}",
         f"trace_alignment_mad_seconds={trace_mad}",
         f"trace_alignment_unique_triples={trace_align_matches}",

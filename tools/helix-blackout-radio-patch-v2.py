@@ -29,32 +29,72 @@ replace_once(
     "trace metadata",
 )
 
-# Inject immediately before the unique detached Quest tcpdump launch block.
-# Match by the stable failure marker instead of the command's generated escape depth.
-launch_fail = '    || fail "could not launch detached Quest tcpdump"\n'
-if text.count(launch_fail) != 1:
-    raise SystemExit(f"arm Quest WLAN trace: expected exactly one detached tcpdump failure marker, found {text.count(launch_fail)}")
-fail_pos = text.index(launch_fail)
-launch_start = text.rfind('\nadb shell ', 0, fail_pos)
-if launch_start < 0:
-    raise SystemExit("arm Quest WLAN trace: could not locate detached tcpdump adb command")
-launch_start += 1
-arm = (
-    'adb shell "su -c \'mkdir $TRACE_INSTANCE; echo 0 > $TRACE_INSTANCE/tracing_on; '
-    'echo 0 > $TRACE_INSTANCE/events/enable; echo $TRACE_BUFFER_KB > $TRACE_INSTANCE/buffer_size_kb; '
-    'echo 1 > $TRACE_INSTANCE/options/overwrite; '
-    'cat $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format > $QUEST_TMP.trace-format; '
-    'echo 1 > $TRACE_EVENT/enable; echo 1 > $TRACE_INSTANCE/tracing_on\'" >/dev/null 2>&1 '
-    '|| fail "could not arm bounded Quest wlan:dp_rx_udp_pkt trace"\n'
-    'adb shell "su -c \'grep -q 1 $TRACE_INSTANCE/tracing_on && grep -q 1 $TRACE_EVENT/enable\'" '
-    '>/dev/null 2>&1 || fail "Quest WLAN trace did not remain armed"\n\n'
+marker = '    || fail "could not launch detached Quest tcpdump"\n'
+trace_arm = (
+    marker
+    + 'adb shell "su -c \'mkdir $TRACE_INSTANCE; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_INSTANCE/events/enable; echo $TRACE_BUFFER_KB > $TRACE_INSTANCE/buffer_size_kb; echo 1 > $TRACE_INSTANCE/options/overwrite; cat $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format > $QUEST_TMP.trace-format; echo 1 > $TRACE_EVENT/enable; echo 1 > $TRACE_INSTANCE/tracing_on\'" >/dev/null 2>&1 || fail "could not arm bounded Quest wlan:dp_rx_udp_pkt trace"\n'
+    + 'adb shell "su -c \'grep -q 1 $TRACE_INSTANCE/tracing_on && grep -q 1 $TRACE_EVENT/enable\'" >/dev/null 2>&1 || fail "Quest WLAN trace did not remain armed"\n'
 )
-text = text[:launch_start] + arm + text[launch_start:]
+replace_once(marker, trace_arm, "arm Quest WLAN trace")
 
 replace_once(
     '[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"\n\nsnapshot_quest after\n',
     '[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"\n\nadb shell "su -c \'echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable; cat $TRACE_INSTANCE/trace > $QUEST_TMP.wlan-dp-rx-udp.trace; cat $TRACE_INSTANCE/per_cpu/cpu*/stats > $QUEST_TMP.trace-stats\'" >/dev/null 2>&1 || fail "could not stop/preserve Quest WLAN trace after USB reconnect"\nadb exec-out su -c "cat \'$QUEST_TMP.wlan-dp-rx-udp.trace\'" >"$OUT/quest-wlan-dp-rx-udp.trace" || fail "could not retrieve Quest WLAN driver trace"\nadb exec-out su -c "cat \'$QUEST_TMP.trace-format\'" >"$OUT/quest-wlan-dp-rx-udp-format.txt" || fail "could not retrieve Quest WLAN trace format"\nadb exec-out su -c "cat \'$QUEST_TMP.trace-stats\'" >"$OUT/quest-wlan-trace-stats.txt" || fail "could not retrieve Quest WLAN trace-buffer stats"\n\nsnapshot_quest after\n',
     "stop and retrieve Quest WLAN trace",
 )
+
+# The USB-detached wrapper used to start host tcpdump only after USB was
+# unplugged. If the sudo credential expired while the user moved into VR,
+# background tcpdump could race an interactive sudo prompt. Move the complete
+# host observer launch + verification block before the detach prompt instead.
+lines = text.splitlines(keepends=True)
+
+
+def unique_line(substr: str, label: str) -> int:
+    matches = [i for i, line in enumerate(lines) if substr in line]
+    if len(matches) != 1:
+        raise SystemExit(f"{label}: expected one generated line containing {substr!r}, found {len(matches)}")
+    return matches[0]
+
+
+usb_prompt = unique_line('echo "USB-DETACHED WORKLOAD MODE"', "USB prompt anchor")
+host_start = unique_line('sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"', "host tcpdump launch anchor")
+armed_banner = unique_line('echo "Helix blackout capture"', "capture banner anchor")
+if not (usb_prompt < host_start < armed_banner):
+    raise SystemExit("generated host capture block is not in the expected post-detach position")
+
+host_block = lines[host_start:armed_banner]
+del lines[host_start:armed_banner]
+lines[usb_prompt:usb_prompt] = host_block + ["\n"]
+text = "".join(lines)
+
+# Audit-A structural assertions on the exact generated artifact.
+def pos(fragment: str, label: str) -> int:
+    i = text.find(fragment)
+    if i < 0:
+        raise SystemExit(f"generated-path audit: missing {label}")
+    if text.find(fragment, i + 1) >= 0:
+        raise SystemExit(f"generated-path audit: duplicate {label}")
+    return i
+
+
+p_trace = pos('could not arm bounded Quest wlan:dp_rx_udp_pkt trace', "Quest driver trace arm")
+p_quest_verify = pos('detached Quest tcpdump exited before USB detach', "Quest tcpdump pre-detach verification")
+p_host_launch = pos('sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"', "host tcpdump launch")
+p_host_verify = pos('host tcpdump did not report an active capture loop before CAPTURE ARMED', "host tcpdump verification")
+p_usb_prompt = pos('USB-DETACHED WORKLOAD MODE', "USB detach prompt")
+p_zero_adb = pos('Quest is still visible to ADB; unplug USB and ensure wireless ADB is disconnected', "zero-ADB gate")
+p_start = pos('capture_start_epoch_ns=$CAPTURE_START_EPOCH_NS', "workload start timestamp")
+p_armed = pos('CAPTURE ARMED. No ADB session remains attached during the workload.', "capture armed banner")
+p_reconnect = pos('WORKLOAD COMPLETE', "USB reconnect boundary")
+
+order = [p_trace, p_quest_verify, p_host_launch, p_host_verify, p_usb_prompt, p_zero_adb, p_start, p_armed, p_reconnect]
+if order != sorted(order):
+    raise SystemExit("generated-path audit: observer/detach/start ordering is wrong")
+
+workload_window = text[p_zero_adb:p_reconnect]
+for forbidden in ('adb shell', 'adb exec-out', 'adb devices'):
+    if forbidden in workload_window:
+        raise SystemExit(f"generated-path audit: {forbidden!r} remains inside detached workload window")
 
 path.write_text(text)

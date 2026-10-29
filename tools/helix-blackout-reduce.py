@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import collections
 import datetime as dt
 import ipaddress
 import re
@@ -16,6 +17,12 @@ GAP_RE = re.compile(
     r"mapping=(?P<mapping>\w+) mapped=(?P<mapped>\d+) send_span=(?P<span>\d+)us "
     r"distinct_frames=(?P<frames>\d+) report_delay=(?P<delay>\d+)us"
 )
+
+LOCAL_SEARCH_SLACK = 0.250
+MIN_LOCAL_MATCH_RATIO = 0.90
+MAX_DUPLICATE_RATIO = 0.005
+MAX_LOCAL_MAD_SECONDS = 0.010
+MIN_LOCAL_UNIQUE_MATCHES = 50
 
 
 def read_metadata(path: Path):
@@ -80,6 +87,16 @@ def parse_events(server_log: Path, tz, capture_start, capture_end):
     return events
 
 
+def merge_windows(windows):
+    merged = []
+    for start, end in sorted(windows):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def event_windows(events, pad, fallback_radius):
     windows = []
     for e in events:
@@ -87,14 +104,7 @@ def event_windows(events, pad, fallback_radius):
             windows.append((e["first_send_epoch"] - pad, e["last_send_epoch"] + pad))
         else:
             windows.append((e["report_epoch"] - fallback_radius, e["report_epoch"] + fallback_radius))
-    windows.sort()
-    merged = []
-    for start, end in windows:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return merged
+    return merge_windows(windows)
 
 
 def pcap_info(header: bytes):
@@ -133,8 +143,6 @@ def iter_pcap(path: Path):
 
 
 def udp_fingerprint(frame: bytes, host_ip: str, quest_ip: str):
-    # Both validated interfaces report DLT_EN10MB. Handle one or more VLAN tags
-    # defensively, then fingerprint the immutable UDP payload rather than L2/L3 headers.
     if len(frame) < 14:
         return None
     offset = 14
@@ -163,7 +171,7 @@ def udp_fingerprint(frame: bytes, host_ip: str, quest_ip: str):
     else:
         return None
 
-    if src != host_ip or dst != quest_ip:
+    if src != host_ip or dst != quest_ip or len(frame) < udp + 9:
         return None
     src_port = int.from_bytes(frame[udp:udp + 2], "big")
     dst_port = int.from_bytes(frame[udp + 2:udp + 4], "big")
@@ -181,6 +189,7 @@ def derive_quest_clock_offset(host_pcap: Path, quest_pcap: Path, host_ip: str, q
         _e, _s, quest_linktype = pcap_info(f.read(24))
     if host_linktype != 1 or quest_linktype != 1:
         raise SystemExit(f"Packet clock alignment expects Ethernet captures (DLT_EN10MB=1), got host={host_linktype} quest={quest_linktype}")
+
     host = {}
     for ts, frame, *_ in iter_pcap(host_pcap):
         fp = udp_fingerprint(frame, host_ip, quest_ip)
@@ -209,13 +218,54 @@ def derive_quest_clock_offset(host_pcap: Path, quest_pcap: Path, host_ip: str, q
         raise SystemExit(f"Only {len(deltas)} identical UDP packets could be matched between host and Quest captures; cannot align clocks reliably")
 
     median = statistics.median(deltas)
-    abs_dev = [abs(x - median) for x in deltas]
-    mad = statistics.median(abs_dev)
+    mad = statistics.median(abs(x - median) for x in deltas)
     return median, mad, len(deltas)
 
 
-def shift_windows(windows, offset):
-    return [(start + offset, end + offset) for start, end in windows]
+def collect_window_packets(path, windows, host_ip, quest_ip):
+    buckets = [[] for _ in windows]
+    for ts, frame, *_ in iter_pcap(path):
+        fp = udp_fingerprint(frame, host_ip, quest_ip)
+        if fp is None:
+            continue
+        for i, (start, end) in enumerate(windows):
+            if start <= ts <= end:
+                buckets[i].append((ts, fp))
+                break
+    return buckets
+
+
+def correlate_window(host_records, quest_records, coarse_offset):
+    host_counter = collections.Counter(fp for _, fp in host_records)
+    quest_counter = collections.Counter(fp for _, fp in quest_records)
+    matched = sum((host_counter & quest_counter).values())
+    host_total = len(host_records)
+    quest_total = len(quest_records)
+    host_dup_ratio = (host_total - len(host_counter)) / host_total if host_total else 1.0
+    quest_dup_ratio = (quest_total - len(quest_counter)) / quest_total if quest_total else 1.0
+
+    host_unique = {fp: ts for ts, fp in host_records if host_counter[fp] == 1}
+    quest_unique = {fp: ts for ts, fp in quest_records if quest_counter[fp] == 1}
+    shared = host_unique.keys() & quest_unique.keys()
+    deltas = [quest_unique[fp] - host_unique[fp] for fp in shared]
+    if deltas:
+        local_offset = statistics.median(deltas)
+        local_mad = statistics.median(abs(x - local_offset) for x in deltas)
+    else:
+        local_offset = coarse_offset
+        local_mad = None
+
+    return {
+        "host_total": host_total,
+        "quest_total": quest_total,
+        "matched": matched,
+        "match_ratio": matched / host_total if host_total else 0.0,
+        "host_duplicate_ratio": host_dup_ratio,
+        "quest_duplicate_ratio": quest_dup_ratio,
+        "unique_matches": len(deltas),
+        "local_offset": local_offset,
+        "local_mad": local_mad,
+    }
 
 
 def in_windows(ts: float, windows):
@@ -304,15 +354,44 @@ def main():
     if missing and not args.allow_missing_capture:
         raise SystemExit("Missing decisive capture(s): " + ", ".join(missing) + ". Use --allow-missing-capture only for historical/non-decisive runs.")
 
+    decision_reasons = []
+    if metadata.get("wifi_path_stable") != "true":
+        decision_reasons.append("Quest BSSID/6-GHz path was not proven stable for the full run")
+
     quest_offset = quest_mad = None
     alignment_matches = 0
+    local_stats = []
+    host_ip = metadata.get("host_ip", "")
+    quest_ip = metadata.get("quest_ip", "")
     if not missing:
-        host_ip = metadata.get("host_ip", "")
-        quest_ip = metadata.get("quest_ip", "")
         if not host_ip or not quest_ip:
             raise SystemExit("metadata.txt lacks host_ip/quest_ip required for packet-based clock alignment")
         quest_offset, quest_mad, alignment_matches = derive_quest_clock_offset(host_pcap, quest_pcap, host_ip, quest_ip)
-        quest_windows = shift_windows(host_windows, quest_offset)
+
+        quest_search_windows = [
+            (start + quest_offset - LOCAL_SEARCH_SLACK, end + quest_offset + LOCAL_SEARCH_SLACK)
+            for start, end in host_windows
+        ]
+        host_buckets = collect_window_packets(host_pcap, host_windows, host_ip, quest_ip)
+        quest_buckets = collect_window_packets(quest_pcap, quest_search_windows, host_ip, quest_ip)
+
+        quest_windows = []
+        for i, ((start, end), host_records, quest_records) in enumerate(zip(host_windows, host_buckets, quest_buckets), 1):
+            stats = correlate_window(host_records, quest_records, quest_offset)
+            stats["index"] = i
+            local_stats.append(stats)
+            if stats["unique_matches"] < MIN_LOCAL_UNIQUE_MATCHES:
+                decision_reasons.append(f"window {i}: only {stats['unique_matches']} unique local packet matches")
+            if stats["match_ratio"] < MIN_LOCAL_MATCH_RATIO:
+                decision_reasons.append(f"window {i}: surrounding PC->Quest match ratio {stats['match_ratio']:.3f} < {MIN_LOCAL_MATCH_RATIO:.2f}")
+            if stats["host_duplicate_ratio"] > MAX_DUPLICATE_RATIO or stats["quest_duplicate_ratio"] > MAX_DUPLICATE_RATIO:
+                decision_reasons.append(
+                    f"window {i}: fingerprint duplicate ratio host={stats['host_duplicate_ratio']:.4f} quest={stats['quest_duplicate_ratio']:.4f}"
+                )
+            if stats["local_mad"] is None or stats["local_mad"] > MAX_LOCAL_MAD_SECONDS:
+                decision_reasons.append(f"window {i}: local clock/capture timing spread is too large or unavailable")
+            quest_windows.append((start + stats["local_offset"], end + stats["local_offset"]))
+        quest_windows = merge_windows(quest_windows)
     else:
         quest_windows = host_windows
 
@@ -328,15 +407,28 @@ def main():
     display_tz = tz or dt.datetime.now().astimezone().tzinfo
     summary = [
         f"source={src}",
+        f"attribution_scope={metadata.get('attribution_scope', 'unknown')}",
         f"gap_events_current_run={len(events)}",
         f"pad_seconds={args.pad}",
         f"fallback_radius_seconds={args.fallback_radius}",
         f"merged_host_windows={len(host_windows)}",
         f"host_tz_offset={metadata.get('host_tz_offset', 'legacy-local-time')}",
-        f"quest_clock_offset_seconds={quest_offset}",
-        f"quest_clock_alignment_mad_seconds={quest_mad}",
-        f"quest_clock_alignment_matches={alignment_matches}",
+        f"quest_clock_offset_coarse_seconds={quest_offset}",
+        f"quest_clock_alignment_coarse_mad_seconds={quest_mad}",
+        f"quest_clock_alignment_coarse_matches={alignment_matches}",
     ]
+
+    for i, stats in enumerate(local_stats, 1):
+        summary.append(
+            "local_window_%d=host_packets:%d quest_packets:%d matched:%d match_ratio:%.6f unique_matches:%d "
+            "host_duplicate_ratio:%.6f quest_duplicate_ratio:%.6f local_offset:%.9f local_mad:%s" % (
+                i,
+                stats["host_total"], stats["quest_total"], stats["matched"], stats["match_ratio"],
+                stats["unique_matches"], stats["host_duplicate_ratio"], stats["quest_duplicate_ratio"],
+                stats["local_offset"], "unavailable" if stats["local_mad"] is None else f"{stats['local_mad']:.9f}",
+            )
+        )
+
     for i, e in enumerate(events, 1):
         summary.append(
             "event_%d=stream:%d first:%d count:%d mapping:%s mapped:%d span_us:%d delay_us:%d report:%s send:%s..%s" % (
@@ -348,8 +440,6 @@ def main():
         )
     for i, (start, end) in enumerate(host_windows, 1):
         summary.append(f"host_window_{i}={fmt_epoch(start, display_tz)}..{fmt_epoch(end, display_tz)}")
-        if quest_offset is not None:
-            summary.append(f"quest_window_{i}_epoch={start + quest_offset:.6f}..{end + quest_offset:.6f}")
 
     for name, p, windows in (("host.pcap", host_pcap, host_windows), ("quest.pcap", quest_pcap, quest_windows)):
         if name in missing:
@@ -365,20 +455,26 @@ def main():
             f"{name}_last_epoch={stats['last']}",
         ])
         if stats["total"] == 0:
-            raise SystemExit(f"{name} contains no packets; refusing to produce a misleading reduced bundle")
+            decision_reasons.append(f"{name} contains no packets")
         if stats["kept"] == 0:
-            raise SystemExit(f"{name} kept zero packets around real gap windows; timestamp/capture correlation is invalid")
+            decision_reasons.append(f"{name} retained zero packets around decision windows")
         for start, end in windows:
             if stats["first"] is None or stats["last"] is None or start < stats["first"] - 0.050 or end > stats["last"] + 0.050:
-                raise SystemExit(f"{name} does not cover every decision window; refusing to hide incomplete capture coverage")
+                decision_reasons.append(f"{name} does not fully cover every decision window")
+                break
 
     for label, stat_file in (("host", src / "host-tcpdump.txt"), ("quest", src / "quest-tcpdump.txt")):
         drops = tcpdump_kernel_drops(stat_file)
         summary.append(f"{label}_tcpdump_kernel_drops={drops}")
         if drops is None and not args.allow_missing_capture:
-            raise SystemExit(f"Could not verify {label} tcpdump kernel-drop count; capture integrity is ambiguous")
-        if drops not in (None, 0):
-            raise SystemExit(f"{label} tcpdump reports {drops} packets dropped by kernel; cannot use absence from the PCAP as path-loss evidence")
+            decision_reasons.append(f"{label} tcpdump kernel-drop count is unavailable")
+        elif drops not in (None, 0):
+            decision_reasons.append(f"{label} tcpdump reports {drops} packets dropped by kernel")
+
+    decision_capable = not decision_reasons and not missing
+    summary.append(f"decision_capable={'true' if decision_capable else 'false'}")
+    for i, reason in enumerate(decision_reasons, 1):
+        summary.append(f"decision_blocker_{i}={reason}")
 
     (out / "reduction-summary.txt").write_text("\n".join(summary) + "\n")
 
@@ -388,7 +484,12 @@ def main():
 
     print(f"Found {len(events)} current-run Helix gap event(s); retained reconstructed sender windows with ±{args.pad:g}s padding.")
     if quest_offset is not None:
-        print(f"Aligned Quest capture from {alignment_matches} identical UDP packets (median offset {quest_offset:+.6f}s, MAD {quest_mad:.6f}s).")
+        print(f"Coarse Quest alignment: {alignment_matches} identical UDP packets, offset {quest_offset:+.6f}s, MAD {quest_mad:.6f}s.")
+        print(f"Local correlation checked independently for {len(local_stats)} blackout window(s).")
+    if decision_capable:
+        print("Decision gate: PASS — paired captures are suitable for host-capture -> Quest-wlan attribution.")
+    else:
+        print("Decision gate: NON-DECISIVE — bundle preserved; see reduction-summary.txt for blockers.")
     print(f"Reduced bundle: {archive}")
     print(f"Size: {archive.stat().st_size / (1024 * 1024):.1f} MiB")
 

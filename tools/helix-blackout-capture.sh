@@ -141,7 +141,7 @@ QUEST_PRE_PID="$QUEST_TMP-preflight.pid"
 QUEST_PRE_ERR="$QUEST_TMP-preflight.err"
 HOST_PRE="$OUT/host-preflight.pcap"
 adb shell su -c "rm -f $QUEST_PRE $QUEST_PRE_PID $QUEST_PRE_ERR" >/dev/null 2>&1 || true
-adb shell su -c "sh -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -c 1 -w $QUEST_PRE -- \"icmp and host $HOST_IP\" >/dev/null 2>$QUEST_PRE_ERR </dev/null & echo \$! > $QUEST_PRE_PID'" >/dev/null 2>&1 \
+adb shell "su -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -c 1 -w $QUEST_PRE -- \"icmp and host $HOST_IP\" >/dev/null 2>$QUEST_PRE_ERR </dev/null & echo \$! > $QUEST_PRE_PID'" >/dev/null 2>&1 \
     || fail "could not launch detached Quest tcpdump preflight"
 
 sudo timeout 8s tcpdump -i "$HOST_IF" -s 96 -c 1 -w "$HOST_PRE" -- "icmp and host $QUEST_IP" >/dev/null 2>&1 &
@@ -161,6 +161,10 @@ if adb shell su -c "kill -0 \$(cat $QUEST_PRE_PID) 2>/dev/null" >/dev/null 2>&1;
 fi
 wait "$HOST_PRE_PID" || fail "host tcpdump preflight did not capture a packet within 8 seconds"
 
+if ! adb shell "su -c 'test -s $QUEST_PRE'" >/dev/null 2>&1; then
+    adb shell "su -c 'cat $QUEST_PRE_ERR 2>/dev/null || true'" >&2 || true
+    fail "detached Quest tcpdump preflight produced no PCAP"
+fi
 QUEST_PRE_LOCAL="$OUT/quest-preflight.pcap"
 adb exec-out su -c "cat '$QUEST_PRE'" >"$QUEST_PRE_LOCAL" || fail "could not read detached Quest preflight PCAP as root"
 [[ "$(pcap_linktype "$HOST_PRE")" == "1" ]] || fail "host capture link type is not Ethernet (DLT_EN10MB=1)"
@@ -256,7 +260,7 @@ echo "capture_start_epoch_ns=$CAPTURE_START_EPOCH_NS" >>"$OUT/metadata.txt"
 echo "capture_started_utc=$(date -u +%FT%TZ)" >>"$OUT/metadata.txt"
 
 adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.tcpdump.pid $QUEST_TMP.tcpdump.err" >/dev/null 2>&1 || true
-adb shell su -c "sh -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -w $QUEST_TMP.pcap -- \"$FILTER\" >/dev/null 2>$QUEST_TMP.tcpdump.err </dev/null & echo \$! > $QUEST_TMP.tcpdump.pid'" >/dev/null 2>&1 \
+adb shell "su -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -w $QUEST_TMP.pcap -- \"$FILTER\" >/dev/null 2>$QUEST_TMP.tcpdump.err </dev/null & echo \$! > $QUEST_TMP.tcpdump.pid'" >/dev/null 2>&1 \
     || fail "could not launch detached Quest tcpdump"
 
 sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap" -- "$FILTER" >"$OUT/host-tcpdump.txt" 2>&1 &
@@ -270,7 +274,10 @@ kill -0 "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || fail "host tcpdump exited before 
 kill -0 "$HOST_SAMPLER_PID" >/dev/null 2>&1 || fail "host sampler exited before CAPTURE ARMED"
 adb shell su -c "kill -0 \$(cat $QUEST_TMP.tcpdump.pid)" >/dev/null 2>&1 || fail "detached Quest tcpdump exited before CAPTURE ARMED"
 QUEST_PCAP_BYTES=$(adb shell su -c "wc -c < $QUEST_TMP.pcap" 2>/dev/null | tr -d '\r ' || echo 0)
-[[ "$QUEST_PCAP_BYTES" =~ ^[0-9]+$ && "$QUEST_PCAP_BYTES" -ge 24 ]] || fail "Quest PCAP header was not created"
+if [[ ! "$QUEST_PCAP_BYTES" =~ ^[0-9]+$ || "$QUEST_PCAP_BYTES" -lt 24 ]]; then
+    adb shell su -c "cat $QUEST_TMP.tcpdump.err 2>/dev/null || true" >&2 || true
+    fail "Quest PCAP header was not created"
+fi
 [[ -s "$OUT/host.pcap" ]] || fail "host PCAP header was not created"
 
 echo "Helix blackout capture"

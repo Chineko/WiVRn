@@ -17,8 +17,6 @@ def replace_once(old: str, new: str, label: str) -> None:
     text = text.replace(old, new, 1)
 
 
-# Add explicit observer lifecycle state. The trace watchdog guarantees that a
-# host-side abort while USB is detached cannot leave tracing enabled forever.
 replace_once(
     'MAX_CAPTURE_SECONDS=480\n',
     'MAX_CAPTURE_SECONDS=480\nRADIO_TRACE_ARMED=0\nSUDO_KEEPALIVE_PID=""\nTRACE_WATCHDOG_SECONDS=570\n',
@@ -80,9 +78,6 @@ replace_once(
     "trace metadata",
 )
 
-# Arm and prove the actual event before starting the long-lived Quest tcpdump.
-# The single UDP probe is setup-only, while USB is attached; it is not a
-# workload experiment and the trace is cleared immediately afterward.
 launch_marker = 'adb shell "su -c \'$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -w $QUEST_TMP.pcap -- '
 launch_pos = text.find(launch_marker)
 if launch_pos < 0 or text.find(launch_marker, launch_pos + 1) >= 0:
@@ -99,13 +94,11 @@ PYTRACEPROBE
 sleep 0.2
 adb shell "su -c 'grep -q dp_rx_udp_pkt $TRACE_INSTANCE/trace'" >/dev/null 2>&1 || fail "Quest wlan:dp_rx_udp_pkt did not observe the setup UDP probe"
 adb shell "su -c ': > $TRACE_INSTANCE/trace'" >/dev/null 2>&1 || fail "could not clear Quest WLAN trace after setup probe"
-adb shell "su -c '$QUEST_NOHUP sh -c \"sleep $TRACE_WATCHDOG_SECONDS; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable\" >/dev/null 2>&1 </dev/null & echo \\$! > $QUEST_TMP.trace-watchdog.pid'" >/dev/null 2>&1 || fail "could not launch Quest trace safety watchdog"
+adb shell "su -c '$QUEST_NOHUP sh -c \"sleep $TRACE_WATCHDOG_SECONDS; test -f $QUEST_TMP.tcpdump.pid && kill -2 \\$(cat $QUEST_TMP.tcpdump.pid) 2>/dev/null || true; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable\" >/dev/null 2>&1 </dev/null & echo \\$! > $QUEST_TMP.trace-watchdog.pid'" >/dev/null 2>&1 || fail "could not launch Quest trace/capture safety watchdog"
 
 '''
 text = text[:launch_pos] + trace_arm + text[launch_pos:]
 
-# Keep sudo credentials alive locally while the user is in VR. This prevents
-# both capture startup and shutdown from ever becoming interactive sudo races.
 host_launch_fragment = 'sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"'
 host_launch_pos = text.find(host_launch_fragment)
 if host_launch_pos < 0 or text.find(host_launch_fragment, host_launch_pos + 1) >= 0:
@@ -121,9 +114,6 @@ SUDO_KEEPALIVE_PID=$!
 '''
 text = text[:host_launch_pos] + keepalive + text[host_launch_pos:]
 
-# Move the complete host observer launch/verification block before the USB
-# detach prompt. This makes every privileged/startup failure happen while the
-# user is still at the terminal and USB is still attached.
 lines = text.splitlines(keepends=True)
 
 
@@ -144,9 +134,6 @@ del lines[host_start:armed_banner]
 lines[usb_prompt:usb_prompt] = host_block + ["\n"]
 text = "".join(lines)
 
-# Stop/preserve the trace immediately after the same Quest reconnect identity
-# gate used by the proven USB-detached harness. Preserve per-CPU ring stats so
-# overruns become a hard evidence-quality gate later.
 replace_once(
     '[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"\n\nsnapshot_quest after\n',
     '''[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"
@@ -163,11 +150,8 @@ snapshot_quest after
     "stop and retrieve Quest WLAN trace",
 )
 
-# Stop the sudo keepalive only after all sudo-owned host observers have been
-# stopped by the existing USB-detached shutdown block.
-reconnect_marker = 'echo "WORKLOAD COMPLETE"\n'
 replace_once(
-    reconnect_marker,
+    'echo "WORKLOAD COMPLETE"\n',
     '''if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
     kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
     wait "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
@@ -179,7 +163,7 @@ echo "WORKLOAD COMPLETE"
     "sudo keepalive shutdown",
 )
 
-# Audit A: structural assertions on the exact final generated artifact.
+
 def pos(fragment: str, label: str) -> int:
     i = text.find(fragment)
     if i < 0:
@@ -192,7 +176,7 @@ def pos(fragment: str, label: str) -> int:
 p_format = pos('format lacks required field', "trace format gate")
 p_probe = pos('did not observe the setup UDP probe', "live tracepoint gate")
 p_trace = pos('could not arm bounded Quest wlan:dp_rx_udp_pkt trace', "Quest driver trace arm")
-p_watchdog = pos('could not launch Quest trace safety watchdog', "trace safety watchdog")
+p_watchdog = pos('could not launch Quest trace/capture safety watchdog', "trace/capture safety watchdog")
 p_quest_verify = pos('detached Quest tcpdump exited before USB detach', "Quest tcpdump pre-detach verification")
 p_host_launch = pos(host_launch_fragment, "host tcpdump launch")
 p_host_verify = pos('host tcpdump did not report an active capture loop before CAPTURE ARMED', "host tcpdump verification")
@@ -212,9 +196,7 @@ for forbidden in ('adb shell', 'adb exec-out', 'adb devices', 'sudo -v'):
     if forbidden in workload_window:
         raise SystemExit(f"generated-path audit: {forbidden!r} remains inside detached workload window")
 
-# The final artifact must retain the bounded capture duration and both recovery
-# paths: host-side cleanup plus autonomous Quest trace watchdog.
-for required in ('MAX_CAPTURE_SECONDS=480', 'TRACE_WATCHDOG_SECONDS=570', 'cleanup_all()', 'quest-wlan-trace-stats.txt'):
+for required in ('MAX_CAPTURE_SECONDS=480', 'TRACE_WATCHDOG_SECONDS=570', 'cleanup_all()', 'quest-wlan-trace-stats.txt', 'kill -2 \\$(cat $QUEST_TMP.tcpdump.pid)'):
     if required not in text:
         raise SystemExit(f"generated-path audit: missing required safety element {required!r}")
 

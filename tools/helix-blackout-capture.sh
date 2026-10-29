@@ -162,7 +162,7 @@ fi
 wait "$HOST_PRE_PID" || fail "host tcpdump preflight did not capture a packet within 8 seconds"
 
 QUEST_PRE_LOCAL="$OUT/quest-preflight.pcap"
-adb pull "$QUEST_PRE" "$QUEST_PRE_LOCAL" >/dev/null 2>&1 || fail "could not pull detached Quest preflight PCAP"
+adb exec-out su -c "cat '$QUEST_PRE'" >"$QUEST_PRE_LOCAL" || fail "could not read detached Quest preflight PCAP as root"
 [[ "$(pcap_linktype "$HOST_PRE")" == "1" ]] || fail "host capture link type is not Ethernet (DLT_EN10MB=1)"
 [[ "$(pcap_linktype "$QUEST_PRE_LOCAL")" == "1" ]] || fail "Quest capture link type is not Ethernet (DLT_EN10MB=1)"
 tcpdump -nn -r "$HOST_PRE" -c 1 >/dev/null 2>&1 || fail "host preflight PCAP is unreadable"
@@ -312,7 +312,7 @@ fi
 
 cleanup_capture
 
-adb pull "$QUEST_TMP.pcap" "$OUT/quest.pcap" >/dev/null || fail "failed to pull Quest PCAP"
+adb exec-out su -c "cat '$QUEST_TMP.pcap'" >"$OUT/quest.pcap" || fail "failed to read Quest PCAP as root"
 adb shell su -c "cat $QUEST_TMP.tcpdump.err 2>/dev/null" >"$OUT/quest-tcpdump.txt" 2>&1 || true
 adb shell su -c 'logcat -b all -d -v threadtime 2>/dev/null || logcat -d -v threadtime' >"$OUT/quest-logcat.txt" 2>&1 || true
 adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.tcpdump.pid $QUEST_TMP.tcpdump.err" >/dev/null 2>&1 || true

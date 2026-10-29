@@ -58,11 +58,13 @@ diff --git a/server/encoder/video_encoder.cpp b/server/encoder/video_encoder.cpp
 index a7d3fa4a..00000000 100644
 --- a/server/encoder/video_encoder.cpp
 +++ b/server/encoder/video_encoder.cpp
-@@ -383,6 +383,7 @@ video_encoder::video_encoder(vk_bundle & vk,
+@@ -382,7 +382,8 @@ video_encoder::video_encoder(vk_bundle & vk,
+         need_transfer(not vk.optimal_transfer(vk.queue.family_index, target_queue)),
          bitrate_multiplier(settings.bitrate_multiplier),
          shared_sender(async_send ? sender::get() : nullptr),
-         idr(std::move(idr)),
 +	    helix_td_enabled(settings.encoder_name == encoder_nvenc),
+         idr(std::move(idr)),
+-	    helix_td_enabled(settings.encoder_name == encoder_nvenc),
          extent{
                  .width = settings.width,
                  .height = settings.height,

@@ -56,6 +56,15 @@ print(raw & 0xFFFF)
 PY
 }
 
+quest_executable() {
+    local name=$1
+    local path
+    path=$(adb shell "su -c 'which $name 2>/dev/null'" | tr -d '\r' | awk '/^\// {print; exit}')
+    [[ -n "$path" ]] || return 1
+    adb shell "su -c 'test -x $path'" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$path"
+}
+
 cleanup_capture() {
     set +e
     if [[ "$CAPTURE_ACTIVE" -eq 1 ]]; then
@@ -119,10 +128,10 @@ QUEST_BSSID_BEFORE=$(wifi_bssid <<<"$WIFI_STATUS_BEFORE")
 (( QUEST_FREQ_BEFORE >= 5925 && QUEST_FREQ_BEFORE <= 7125 )) || fail "Quest is not on 6 GHz before the run (frequency ${QUEST_FREQ_BEFORE} MHz)"
 [[ -n "$QUEST_BSSID_BEFORE" ]] || fail "could not determine Quest BSSID before the run"
 
-QUEST_TCPDUMP=$(adb shell "su -c 'command -v tcpdump 2>/dev/null || which tcpdump 2>/dev/null'" | tr -d '\r' | tail -n1)
-QUEST_NOHUP=$(adb shell "su -c 'command -v nohup 2>/dev/null || which nohup 2>/dev/null'" | tr -d '\r' | tail -n1)
-[[ -n "$QUEST_TCPDUMP" ]] || fail "tcpdump is not available on the rooted Quest"
-[[ -n "$QUEST_NOHUP" ]] || fail "nohup is not available on the rooted Quest; cannot detach capture cleanly"
+QUEST_TCPDUMP=$(quest_executable tcpdump || true)
+QUEST_NOHUP=$(quest_executable nohup || true)
+[[ "$QUEST_TCPDUMP" == /* ]] || fail "tcpdump did not resolve to an absolute executable path on the rooted Quest"
+[[ "$QUEST_NOHUP" == /* ]] || fail "nohup did not resolve to an absolute executable path on the rooted Quest"
 FILTER="udp and src host $HOST_IP and dst host $QUEST_IP"
 
 tcpdump -d "$FILTER" >/dev/null 2>&1 || fail "host tcpdump rejected capture filter: $FILTER"

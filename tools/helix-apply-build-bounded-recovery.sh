@@ -54,6 +54,21 @@ for path, markers in checks.items():
     for marker in markers:
         if marker not in text:
             raise SystemExit(f"error: transformed-source marker missing in {path}: {marker}")
+
+# Compile-gate correction: video_stream_data_shard::payload is a mutable span while
+# the replay cache owns bytes in a vector. Build an explicit span view; do not copy
+# or allocate. The vector remains alive under video_encoder::mutex through send_stream().
+p = Path("server/encoder/video_encoder.cpp")
+text = p.read_text()
+old = "packet.payload = entry.payload;"
+new = "packet.payload = std::span<uint8_t>{entry.payload.data(), entry.payload.size()};"
+if old in text:
+    if text.count(old) != 1:
+        raise SystemExit(f"error: expected one replay payload anchor, found {text.count(old)}")
+    text = text.replace(old, new, 1)
+    p.write_text(text)
+elif new not in text:
+    raise SystemExit("error: replay payload assignment is neither original nor audited corrected form")
 PY
 
 # Only the three audited source files may be dirty. This preserves unrelated work.

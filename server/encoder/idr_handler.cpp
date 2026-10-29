@@ -124,9 +124,18 @@ default_idr_handler::frame_type default_idr_handler::get_type(uint64_t frame_ind
 		                          }
 		                          return frame_type::p;
 	                          },
-	                          [stream_idx, frame_index](wait_idr_feedback s) {
-		                          if (s.idr_id != frame_index)
-			                          U_LOG_W("inconsistent IDR state on stream %d", stream_idx);
+	                          [stream_idx, frame_index](wait_idr_feedback & s) {
+		                          if (frame_index < s.idr_id)
+		                          {
+			                          U_LOG_I("IDR frame retargeted on stream %d from %ld to in-flight frame %ld",
+			                                  stream_idx,
+			                                  s.idr_id,
+			                                  frame_index);
+			                          s.idr_id = frame_index;
+			                          return frame_type::i;
+		                          }
+		                          if (frame_index > s.idr_id)
+			                          return frame_type::p;
 		                          return frame_type::i;
 	                          },
 	                  },

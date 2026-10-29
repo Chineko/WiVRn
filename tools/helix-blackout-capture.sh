@@ -23,7 +23,7 @@ need() {
     command -v "$1" >/dev/null 2>&1 || fail "missing required host command: $1"
 }
 
-for cmd in adb awk cut date df git grep ip ping python3 sudo tcpdump timeout wc; do
+for cmd in adb awk cut date df git grep ip ping pgrep python3 sudo tcpdump timeout wc; do
     need "$cmd"
 done
 
@@ -143,7 +143,7 @@ adb shell su -c "rm -f $QUEST_PRE $QUEST_PRE_PID $QUEST_PRE_ERR" >/dev/null 2>&1
 adb shell su -c "sh -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -c 1 -w $QUEST_PRE -- \"icmp and host $HOST_IP\" >/dev/null 2>$QUEST_PRE_ERR </dev/null & echo \$! > $QUEST_PRE_PID'" >/dev/null 2>&1 \
     || fail "could not launch detached Quest tcpdump preflight"
 
-sudo tcpdump -i "$HOST_IF" -s 96 -c 1 -w "$HOST_PRE" -- "icmp and host $QUEST_IP" >/dev/null 2>&1 &
+sudo timeout 8s tcpdump -i "$HOST_IF" -s 96 -c 1 -w "$HOST_PRE" -- "icmp and host $QUEST_IP" >/dev/null 2>&1 &
 HOST_PRE_PID=$!
 sleep 0.3
 ping -c 1 -W 1 "$QUEST_IP" >/dev/null 2>&1 || true
@@ -158,7 +158,7 @@ if adb shell su -c "kill -0 \$(cat $QUEST_PRE_PID) 2>/dev/null" >/dev/null 2>&1;
     adb shell su -c "kill -2 \$(cat $QUEST_PRE_PID) 2>/dev/null || true" >/dev/null 2>&1 || true
     fail "detached Quest tcpdump preflight did not capture a packet"
 fi
-wait "$HOST_PRE_PID" || fail "host tcpdump preflight did not capture a packet"
+wait "$HOST_PRE_PID" || fail "host tcpdump preflight did not capture a packet within 8 seconds"
 
 QUEST_PRE_LOCAL="$OUT/quest-preflight.pcap"
 adb pull "$QUEST_PRE" "$QUEST_PRE_LOCAL" >/dev/null 2>&1 || fail "could not pull detached Quest preflight PCAP"
@@ -179,6 +179,7 @@ TOOL_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
     echo "runtime_source_base=$RUNTIME_BASE"
     echo "runtime_source_equivalent=true"
     echo "attribution_scope=host_capture_to_quest_wlan"
+    echo "branch=$(git -C "$ROOT" branch --show-current)"
     echo "host_ip=$HOST_IP"
     echo "host_if=$HOST_IF"
     echo "quest_ip=$QUEST_IP"
@@ -292,17 +293,17 @@ snapshot_quest after
 WIFI_STATUS_AFTER=$(cat "$OUT/quest-wifi-status-after.txt" 2>/dev/null || true)
 QUEST_FREQ_AFTER=$(wifi_frequency_mhz <<<"$WIFI_STATUS_AFTER")
 QUEST_BSSID_AFTER=$(wifi_bssid <<<"$WIFI_STATUS_AFTER")
-WIFI_STABLE=true
+WIFI_ENDPOINT_CONSISTENT=true
 if [[ ! "$QUEST_FREQ_AFTER" =~ ^[0-9]+$ ]] || (( QUEST_FREQ_AFTER < 5925 || QUEST_FREQ_AFTER > 7125 )); then
-    WIFI_STABLE=false
+    WIFI_ENDPOINT_CONSISTENT=false
 fi
 if [[ -z "$QUEST_BSSID_AFTER" || "$QUEST_BSSID_AFTER" != "$QUEST_BSSID_BEFORE" ]]; then
-    WIFI_STABLE=false
+    WIFI_ENDPOINT_CONSISTENT=false
 fi
 {
     echo "quest_bssid_after=$QUEST_BSSID_AFTER"
     echo "quest_frequency_mhz_after=$QUEST_FREQ_AFTER"
-    echo "wifi_path_stable=$WIFI_STABLE"
+    echo "wifi_endpoint_state_consistent=$WIFI_ENDPOINT_CONSISTENT"
 } >>"$OUT/metadata.txt"
 
 cleanup_capture

@@ -33,14 +33,14 @@ for path in "$SELF_PATH" "$V2_PATH"; do
     [[ "$local_blob" == "$head_blob" ]] || fail "local $path differs from HEAD artifact"
 done
 
-# The everything preset enables the server, dashboard, and server-side OpenXR
-# runtime library. Build the preset's normal ALL target instead of only the two
-# executables so Monado's development runtime and manifest exist in-tree.
-echo "[v3 preflight 1/2] Building complete everything target"
+# The everything preset enables the server, dashboard, Monado OpenXR runtime
+# target (openxr_wivrn), and the monado library used by its build-tree manifest.
+# Build only that dependency set instead of the unrelated ALL targets.
+echo "[v3 preflight 1/2] Building desktop + build-tree OpenXR runtime targets"
 if [[ ! -f build-everything/build.ninja ]]; then
     cmake --preset everything
 fi
-cmake --build build-everything -j
+cmake --build build-everything --target wivrn-server wivrn-dashboard openxr_wivrn monado -j
 
 # active_runtime::manifest_path() deliberately looks for this exact build-tree
 # manifest before falling back to the install prefix. Validate both the JSON and

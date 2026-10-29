@@ -14,20 +14,26 @@ for cmd in awk find git grep python3 sort; do need "$cmd"; done
 
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "expected branch $EXPECTED_BRANCH"
 
-mapfile -t candidates < <(find "$HOME" -maxdepth 1 -type d -name 'helix-bounded-recovery-*' -printf '%T@\t%p\n' 2>/dev/null | sort -n | awk -F '\t' '{print $2}')
-[[ ${#candidates[@]} -gt 0 ]] || fail "no helix-bounded-recovery output directory found"
-OUT=${candidates[-1]}
+# Select the newest completed evidence bundle for the exact failed runtime HEAD,
+# ignoring unrelated/partial output directories.
+mapfile -t candidates < <(find "$HOME" -maxdepth 1 -type d -name 'helix-bounded-recovery-*' -printf '%T@\t%p\n' 2>/dev/null | sort -nr | awk -F '\t' '{print $2}')
+OUT=""
+for candidate in "${candidates[@]}"; do
+    meta="$candidate/metadata.txt"
+    [[ -s "$meta" && -s "$candidate/server-log.txt" && -s "$candidate/quest-logcat.txt" ]] || continue
+    candidate_head=$(awk -F= '$1=="runtime_head" {print $2; exit}' "$meta")
+    if [[ "$candidate_head" == "$EXPECTED_FAILED_HEAD" ]]; then
+        OUT="$candidate"
+        break
+    fi
+done
+[[ -n "$OUT" ]] || fail "no completed evidence bundle found for failed runtime $EXPECTED_FAILED_HEAD"
+
 META="$OUT/metadata.txt"
 SERVER="$OUT/server-log.txt"
 QUEST="$OUT/quest-logcat.txt"
 RESULT="$OUT/result-salvaged.txt"
-
-for path in "$META" "$SERVER" "$QUEST"; do
-    [[ -s "$path" ]] || fail "missing/empty required artifact: $path"
-done
-
 runtime_head=$(awk -F= '$1=="runtime_head" {print $2; exit}' "$META")
-[[ "$runtime_head" == "$EXPECTED_FAILED_HEAD" ]] || fail "latest evidence is for $runtime_head, expected failed run $EXPECTED_FAILED_HEAD"
 runtime_short=${runtime_head:0:8}
 grep -Fq "$runtime_short" "$SERVER" || fail "server artifact does not contain runtime id $runtime_short"
 

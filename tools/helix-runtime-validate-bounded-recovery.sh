@@ -15,7 +15,7 @@ DASH_PID=""
 
 fail() { echo "Helix runtime gate: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"; }
-for cmd in adb awk bash cmake date find git grep mktemp python3 sort strings timeout tr; do need "$cmd"; done
+for cmd in adb awk bash cmake cut date find git grep head mktemp pkill python3 rm sleep sort strings timeout tr; do need "$cmd"; done
 
 cleanup() {
     set +e
@@ -28,8 +28,6 @@ trap cleanup EXIT INT TERM
 
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "expected branch $EXPECTED_BRANCH"
 git cat-file -e "$SOURCE_BASE^{commit}" 2>/dev/null || fail "source base $SOURCE_BASE not available locally"
-
-# Runtime source must still be exactly source-equivalent to the compiled prototype.
 if ! git diff --quiet "$SOURCE_BASE" -- . ':(exclude)docs/**' ':(exclude)tools/**'; then
     fail "runtime source differs from frozen prototype $SOURCE_BASE"
 fi
@@ -41,6 +39,11 @@ RUNTIME_HEAD=$(git rev-parse HEAD)
 RUNTIME_SHORT=${RUNTIME_HEAD:0:8}
 mkdir -p "$OUT"
 printf 'source_base=%s\nruntime_head=%s\nstarted_utc=%s\n' "$SOURCE_BASE" "$RUNTIME_HEAD" "$(date -u +%FT%TZ)" >"$OUT/metadata.txt"
+
+ADB_COUNT=$(adb devices | awk 'NR>1 && $2 == "device" {n++} END {print n+0}')
+[[ "$ADB_COUNT" -eq 1 ]] || fail "expected exactly one connected ADB device, found $ADB_COUNT"
+ROOT_ID=$(adb shell su -c id 2>/dev/null | tr -d '\r' || true)
+[[ "$ROOT_ID" == *"uid=0"* ]] || fail "Quest root shell is not active"
 
 echo "[1/6] Building matching desktop server + dashboard from $RUNTIME_SHORT"
 if [[ ! -f build-everything/build.ninja ]]; then
@@ -55,12 +58,8 @@ mapfile -t dashboards < <(find build-everything -type f -name wivrn-dashboard -p
 SERVER=${servers[0]}
 DASHBOARD=${dashboards[0]}
 strings "$SERVER" | grep -F "$RUNTIME_SHORT" >/dev/null || fail "server binary does not contain runtime id $RUNTIME_SHORT"
-
 PREFIX=$(find build-everything -type f -path '*/dashboard/prefix.sh' | head -n1 || true)
 [[ -n "$PREFIX" && -f "$PREFIX" ]] || fail "dashboard prefix.sh not found in build-everything"
-
-ADB_COUNT=$(adb devices | awk 'NR>1 && $2 == "device" {n++} END {print n+0}')
-[[ "$ADB_COUNT" -eq 1 ]] || fail "expected exactly one connected ADB device, found $ADB_COUNT"
 
 echo "[2/6] Building matching Quest APK"
 [[ -f ./gradlew ]] || fail "Gradle wrapper not found"
@@ -92,7 +91,6 @@ PY
 rm -f "$APK_TMP"
 
 echo "[4/6] Launching verified dashboard and Quest client"
-# Only stop processes from this build tree; do not kill unrelated system instances.
 pkill -f "$DASHBOARD" >/dev/null 2>&1 || true
 pkill -f "$SERVER" >/dev/null 2>&1 || true
 adb shell am force-stop "$PACKAGE" >/dev/null 2>&1 || true
@@ -140,7 +138,6 @@ fi
 cp "$SERVER_LOG" "$OUT/server-log.txt"
 printf 'server_log_source=%s\nfinished_utc=%s\n' "$SERVER_LOG" "$(date -u +%FT%TZ)" >>"$OUT/metadata.txt"
 
-# Identity is checked again from the runtime logs, not just build artifacts.
 grep -F "$RUNTIME_SHORT" "$OUT/server-log.txt" >/dev/null || fail "runtime server log does not contain $RUNTIME_SHORT"
 grep -F "$RUNTIME_SHORT" "$OUT/quest-logcat.txt" >/dev/null || fail "Quest runtime log does not contain $RUNTIME_SHORT"
 

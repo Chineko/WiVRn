@@ -30,16 +30,19 @@ def one(fragment: str, label: str) -> int:
 anchors = {
     "format": one('format lacks required field', 'trace format gate'),
     "trace_arm": one('could not arm bounded Quest wlan:dp_rx_udp_pkt trace', 'trace arm'),
+    "buffer_readback": one('Quest trace buffer readback mismatch', 'trace buffer readback'),
+    "overwrite_readback": one('Quest trace overwrite readback is not enabled', 'trace overwrite readback'),
     "watchdog": one('could not launch Quest trace/capture safety watchdog', 'Quest watchdog'),
     "quest_ready": one('detached Quest tcpdump exited before USB detach', 'Quest tcpdump readiness'),
     "sync_start": one('did not observe sync-start UDP port', 'sync-start gate'),
     "sudo_refresh": one('could not refresh sudo credentials immediately before host capture', 'sudo refresh'),
-    "host_launch": one('sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"', 'host tcpdump launch'),
+    "host_launch": one('sudo -n tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"', 'noninteractive host tcpdump launch'),
     "host_ready": one('host tcpdump did not report an active capture loop before CAPTURE ARMED', 'host tcpdump readiness'),
     "detach_prompt": one('USB-DETACHED WORKLOAD MODE', 'USB detach prompt'),
     "zero_adb": one('Quest is still visible to ADB; unplug USB and ensure wireless ADB is disconnected', 'zero-ADB gate'),
     "start": one('capture_start_epoch_ns=$CAPTURE_START_EPOCH_NS', 'capture start'),
     "armed": one('CAPTURE ARMED. No ADB session remains attached during the workload.', 'CAPTURE ARMED'),
+    "sudo_end_health": one('sudo credentials are no longer valid at workload end', 'sudo end-health gate'),
     "end": one('capture_end_epoch_ns=$CAPTURE_END_EPOCH_NS', 'capture end'),
     "sync_end_send": one('helix-trace-sync-end', 'post-workload sync-end send'),
     "complete": one('WORKLOAD COMPLETE', 'workload complete boundary'),
@@ -51,10 +54,11 @@ anchors = {
 }
 
 ordered = [
-    "format", "trace_arm", "watchdog", "quest_ready", "sync_start",
-    "sudo_refresh", "host_launch", "host_ready", "detach_prompt", "zero_adb",
-    "start", "armed", "end", "sync_end_send", "complete", "same_quest",
-    "sync_end_verify", "trace_stop", "trace_pull", "base_reduce",
+    "format", "trace_arm", "buffer_readback", "overwrite_readback", "watchdog",
+    "quest_ready", "sync_start", "sudo_refresh", "host_launch", "host_ready",
+    "detach_prompt", "zero_adb", "start", "armed", "sudo_end_health", "end",
+    "sync_end_send", "complete", "same_quest", "sync_end_verify", "trace_stop",
+    "trace_pull", "base_reduce",
 ]
 positions = [anchors[k] for k in ordered]
 if positions != sorted(positions):
@@ -75,6 +79,12 @@ if 'sudo -v' in text[anchors["detach_prompt"]:anchors["complete"]]:
     raise SystemExit("Audit A: interactive sudo refresh remains after detach prompt")
 if 'sudo -n -v' not in text[:anchors["detach_prompt"]]:
     raise SystemExit("Audit A: sudo keepalive is not established before detach")
+if 'sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"' in text:
+    raise SystemExit("Audit A: actual host capture can still invoke interactive sudo")
+if 'sudo kill -2 "$HOST_TCPDUMP_PID"' in text or 'sudo kill -15 "$HOST_TCPDUMP_PID"' in text:
+    raise SystemExit("Audit A: host teardown can still invoke interactive sudo")
+if text.count('sudo -n kill -2 "$HOST_TCPDUMP_PID"') < 1 or text.count('sudo -n kill -15 "$HOST_TCPDUMP_PID"') < 1:
+    raise SystemExit("Audit A: noninteractive host tcpdump teardown is incomplete")
 
 required = (
     'MAX_CAPTURE_SECONDS=480',
@@ -82,6 +92,8 @@ required = (
     'DETACH_PROMPT_SECONDS=180',
     'RECONNECT_PROMPT_SECONDS=120',
     'TRACE_BUFFER_KB=32768',
+    'TRACE_BUFFER_ACTUAL=',
+    'TRACE_OVERWRITE_ACTUAL=',
     'TRACE_SYNC_START_PORTS="49171,49172,49173"',
     'TRACE_SYNC_END_PORTS="49271,49272,49273"',
     'quest_driver_trace_event=wlan:dp_rx_udp_pkt',
@@ -98,6 +110,7 @@ required = (
     'host-tcpdump.txt',
     'quest-tcpdump.txt',
     'rmdir $TRACE_INSTANCE',
+    'kill -0 "$SUDO_KEEPALIVE_PID"',
 )
 for fragment in required:
     if fragment not in text:
@@ -123,7 +136,7 @@ expected = os.environ.get("HELIX_AUDIT_EXPECT_SHA256", "")
 if expected and digest != expected:
     raise SystemExit(f"Audit A: regenerated capture artifact SHA-256 {digest} != audited {expected}")
 
-print(f"Audit A PASS: final generated capture artifact satisfies ordering, measurement isolation, bounds, cleanup, and scope gates. sha256={digest}")
+print(f"Audit A PASS: final generated capture artifact satisfies ordering, measurement isolation, bounds, cleanup, trace readback, noninteractive privilege handling, and scope gates. sha256={digest}")
 
 capture_only = os.environ.get("HELIX_AUDIT_CAPTURE_ONLY_OUT", "")
 if capture_only:

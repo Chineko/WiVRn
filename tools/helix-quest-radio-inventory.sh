@@ -10,7 +10,7 @@ need() {
     command -v "$1" >/dev/null 2>&1 || fail "missing required host command: $1"
 }
 
-for cmd in adb awk date grep tr; do
+for cmd in adb awk date tr; do
     need "$cmd"
 done
 
@@ -92,9 +92,4 @@ OUT=${HELIX_RADIO_INVENTORY_OUT:-"$HOME/helix-quest-radio-inventory-$STAMP.txt"}
 
 [[ -s "$OUT" ]] || fail "inventory output is empty"
 
-echo "Quest radio capability inventory complete."
-echo "Interface: $QUEST_IF"
-echo "Saved: $OUT"
-echo
-echo "Decision-relevant capability summary:"
-grep -E -i 'driver|module|ethtool|unavailable|tracepoint|cfg80211|mac80211|ath|qca|cnss|firmware|reorder|drop|error|ring|reset|timeout' "$OUT" | head -n 120 || true
+printf 'Quest radio capability inventory complete.\nSaved: %s\n' "$OUT"

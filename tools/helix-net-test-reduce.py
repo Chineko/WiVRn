@@ -95,6 +95,7 @@ def main():
 
     sender_status = read_kv(src / "sender-status.txt")
     receiver_status = read_kv(src / "receiver-status.txt")
+    metadata = read_kv(src / "metadata.txt")
 
     total = need_int(sender_status, "total_packets")
     if total <= 0:
@@ -239,6 +240,8 @@ def main():
     ]
 
     integrity_reasons = []
+    if metadata.get("wifi_endpoint_state_consistent") != "true":
+        integrity_reasons.append("Quest BSSID or 6-GHz endpoint state changed or was unavailable")
     if not rxq_supported:
         integrity_reasons.append("receiver SO_RXQ_OVFL telemetry unsupported")
     if not timestamp_supported:
@@ -265,6 +268,7 @@ def main():
     summary = [
         f"source={src}",
         "experiment=standalone_pc_to_quest_udp_no_wivrn_no_tcpdump",
+        f"wifi_endpoint_state_consistent={metadata.get('wifi_endpoint_state_consistent', 'unknown')}",
         f"duration_s={sender_status.get('duration_s', 'unknown')}",
         f"hz={sender_status.get('hz', 'unknown')}",
         f"packets_per_burst={sender_status.get('packets_per_burst', 'unknown')}",
@@ -331,7 +335,7 @@ def main():
     reduced_dir = src.with_name(src.name + "-reduced")
     reduced_dir.mkdir(exist_ok=True)
     for name in (
-        "metadata.txt", "sender-status.txt", "receiver-status.txt", "receiver-stderr.txt",
+        "metadata.txt", "sender-status.txt", "sender-stderr.txt", "receiver-status.txt", "receiver-stderr.txt",
         "reduction-summary.txt", "event-windows.csv",
     ):
         p = src / name

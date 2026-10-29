@@ -54,8 +54,6 @@ values = [anchors[k] for k in ordered]
 if values != sorted(values):
     raise SystemExit("Audit A: exact generated observer/sync/detach/workload/reconnect/reduction order is invalid")
 
-# The active workload boundary must contain no ADB control traffic and no
-# interactive sudo acquisition. Host-only sampler/tcpdump/keepalive remain okay.
 active = text[anchors["zero_adb"]:anchors["end"]]
 for forbidden in ('adb shell', 'adb exec-out', 'adb devices'):
     if forbidden in active:
@@ -92,8 +90,6 @@ for fragment in required:
     if fragment not in text:
         raise SystemExit(f"Audit A: missing required lifecycle/integrity element: {fragment}")
 
-# This slice observes the network; it must not mutate Wi-Fi behavior, transport
-# pacing, bitrate, qdisc, power, channel, or runtime code.
 for forbidden in (
     'setprop persist.vendor.wifi', 'cmd wifi set-', 'iw dev', 'iwconfig',
     'tc qdisc replace', 'tc qdisc add', 'ethtool -K',
@@ -102,10 +98,12 @@ for forbidden in (
     if forbidden in text:
         raise SystemExit(f"Audit A: out-of-scope runtime/network mutation present: {forbidden}")
 
-# Only the single Qualcomm RX UDP tracepoint may be enabled by this slice.
-if 'echo 1 > $TRACE_INSTANCE/events/enable' not in text:
+# The trace instance is globally disabled first; only dp_rx_udp_pkt is enabled.
+if 'echo 0 > $TRACE_INSTANCE/events/enable' not in text:
     raise SystemExit("Audit A: trace instance is not globally disabled before selective event enable")
 if text.count('echo 1 > $TRACE_EVENT/enable') != 1:
     raise SystemExit("Audit A: expected exactly one selective trace-event enable")
+if 'echo 1 > $TRACE_INSTANCE/events/enable' in text:
+    raise SystemExit("Audit A: all trace events are enabled instead of only dp_rx_udp_pkt")
 
 print("Audit A PASS: exact final generated capture artifact satisfies ordering, isolation, bounds, cleanup, and scope gates.")

@@ -38,19 +38,19 @@ anchors = {
     "workload_complete": one('WORKLOAD COMPLETE', 'USB reconnect boundary'),
     "same_quest": one('reconnected ADB device does not match the Quest used for setup', 'same-Quest reconnect gate'),
     "trace_stop": one('could not stop/preserve Quest WLAN trace after USB reconnect', 'trace stop/preserve'),
-    "trace_retrieve": one('quest-wlan-dp-rx-udp.trace', 'trace retrieval target'),
-    "base_reduce": one('helix-blackout-reduce.py', 'paired-PCAP reducer invocation'),
+    "trace_retrieve": one('>"$OUT/quest-wlan-dp-rx-udp.trace"', 'trace retrieval target'),
+    "base_reduce": one('python3 "$ROOT/tools/helix-blackout-reduce.py" "$OUT"', 'paired-PCAP reducer invocation'),
 }
 
 expected_order = [
     "trace_format", "trace_probe", "trace_watchdog", "quest_capture_verified",
     "host_capture_launch", "host_capture_verified", "usb_prompt", "zero_adb",
     "capture_start", "armed", "capture_end", "workload_complete", "same_quest",
-    "trace_stop",
+    "trace_stop", "trace_retrieve", "base_reduce",
 ]
 positions = [anchors[name] for name in expected_order]
 if positions != sorted(positions):
-    raise SystemExit("Audit A: final observer/detach/workload/reconnect ordering is invalid")
+    raise SystemExit("Audit A: final observer/detach/workload/reconnect/reduction ordering is invalid")
 
 # No host->Quest control session is allowed between the zero-ADB gate and the
 # declared workload end. Post-workload host-only shutdown is allowed.
@@ -75,7 +75,8 @@ required = (
     'quest-wlan-trace-stats.txt',
     'wifi_endpoint_state_consistent',
     'host-system-samples.txt',
-    'tcpdump kernel-drop',
+    'host-tcpdump.txt',
+    'quest-tcpdump.txt',
 )
 for fragment in required:
     if fragment not in text:

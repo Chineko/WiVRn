@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 BASE="$ROOT/tools/helix-blackout-usb-detached-run.sh"
-PATCH="$ROOT/tools/helix-blackout-radio-patch.py"
+PATCH="$ROOT/tools/helix-blackout-radio-patch-v2.py"
 [[ -f "$BASE" ]] || { echo "missing $BASE" >&2; exit 1; }
 [[ -f "$PATCH" ]] || { echo "missing $PATCH" >&2; exit 1; }
 
@@ -22,7 +22,7 @@ bash -n "$TMP_RUN"
 
 bash "$TMP_RUN"
 '''
-new = '''python3 "$ROOT/tools/helix-blackout-radio-patch.py" "$TMP_CAPTURE"
+new = '''python3 "$ROOT/tools/helix-blackout-radio-patch-v2.py" "$TMP_CAPTURE"
 bash -n "$TMP_CAPTURE"
 bash -n "$TMP_RUN"
 

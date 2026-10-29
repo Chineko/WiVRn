@@ -12,7 +12,7 @@ BASE_REDUCER="$ROOT/tools/helix-blackout-reduce.py"
 for path in "$USB_RUN" "$PATCH" "$AUDIT" "$RADIO_REDUCER" "$SELFTEST" "$BASE_REDUCER"; do
     [[ -f "$path" ]] || { echo "missing $path" >&2; exit 1; }
 done
-for cmd in python3 bash sha256sum mktemp awk cp rm tar; do
+for cmd in python3 bash sha256sum mktemp awk cp rm mv tar dirname basename; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "missing required host command: $cmd" >&2; exit 1; }
 done
 
@@ -58,20 +58,25 @@ echo
 bash "$USB_RUN"
 
 [[ -d "$OUT" ]] || { echo "radio run completed without expected capture directory: $OUT" >&2; exit 1; }
-python3 "$RADIO_REDUCER" "$OUT"
+[[ -s "$OUT/quest-wlan-dp-rx-udp.trace" ]] || { echo "full Quest driver trace is missing after capture" >&2; exit 1; }
 
-# The proven base reducer already created $OUT-reduced during capture teardown.
-# Add the radio decision summary, but keep the full driver trace only in the raw
-# capture directory so the user-facing upload stays bounded.
+# The proven base reducer runs during capture teardown and may initially copy
+# the full text trace. Trim only that copied artifact immediately; the raw trace
+# remains untouched in $OUT for radio analysis and later forensic inspection.
 REDUCED="${OUT}-reduced"
 ARCHIVE="${OUT}-reduced.tar.gz"
 [[ -d "$REDUCED" ]] || { echo "expected reduced directory is missing: $REDUCED" >&2; exit 1; }
+rm -f "$REDUCED/quest-wlan-dp-rx-udp.trace" "$ARCHIVE"
+
+python3 "$RADIO_REDUCER" "$OUT"
 [[ -s "$OUT/radio-attribution-summary.txt" ]] || { echo "radio attribution summary is missing" >&2; exit 1; }
 cp "$OUT/radio-attribution-summary.txt" "$REDUCED/radio-attribution-summary.txt"
-rm -f "$REDUCED/quest-wlan-dp-rx-udp.trace"
-rm -f "$ARCHIVE"
-tar -C "$(dirname "$REDUCED")" -czf "$ARCHIVE" "$(basename "$REDUCED")"
-[[ -s "$ARCHIVE" ]] || { echo "reduced radio attribution archive is empty" >&2; exit 1; }
+
+TMP_ARCHIVE="${ARCHIVE}.tmp"
+rm -f "$TMP_ARCHIVE"
+tar -C "$(dirname "$REDUCED")" -czf "$TMP_ARCHIVE" "$(basename "$REDUCED")"
+[[ -s "$TMP_ARCHIVE" ]] || { echo "temporary reduced radio attribution archive is empty" >&2; exit 1; }
+mv "$TMP_ARCHIVE" "$ARCHIVE"
 
 trap - EXIT INT TERM
 rm -f "$DRY_CAPTURE"

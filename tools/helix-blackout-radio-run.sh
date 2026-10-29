@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 USB_RUN="$ROOT/tools/helix-blackout-usb-detached-run.sh"
 PATCH="$ROOT/tools/helix-blackout-radio-patch-v2.py"
-AUDIT="$ROOT/tools/helix-blackout-radio-audit.py"
+AUDIT="$ROOT/tools/helix-blackout-radio-audit-v2.py"
 RADIO_REDUCER="$ROOT/tools/helix-blackout-radio-reduce.py"
 BASE_REDUCER="$ROOT/tools/helix-blackout-reduce.py"
 

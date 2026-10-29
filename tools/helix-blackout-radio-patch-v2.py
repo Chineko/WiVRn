@@ -56,6 +56,8 @@ TRACE_ROOT=/sys/kernel/tracing
 TRACE_INSTANCE="$TRACE_ROOT/instances/helix_blackout_$STAMP"
 TRACE_EVENT="$TRACE_INSTANCE/events/wlan/dp_rx_udp_pkt"
 TRACE_BUFFER_KB=16384
+TRACE_SYNC_START_PORTS="49171,49172,49173"
+TRACE_SYNC_END_PORTS="49271,49272,49273"
 adb shell "su -c 'test -r $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format && test -w $TRACE_ROOT/instances'" >/dev/null 2>&1 || fail "Quest wlan:dp_rx_udp_pkt tracepoint/tracefs instance support is unavailable"
 TRACE_FORMAT=$(adb shell "su -c 'cat $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format'" | tr -d '\\r')
 for field in ip_id srcport dstport; do
@@ -74,6 +76,8 @@ replace_once(
     echo "quest_driver_trace_buffer_kb_per_cpu=$TRACE_BUFFER_KB"
     echo "quest_driver_trace_overwrite=true"
     echo "quest_driver_trace_watchdog_seconds=$TRACE_WATCHDOG_SECONDS"
+    echo "quest_driver_trace_sync_start_ports=$TRACE_SYNC_START_PORTS"
+    echo "quest_driver_trace_sync_end_ports=$TRACE_SYNC_END_PORTS"
 ''',
     "trace metadata",
 )
@@ -85,19 +89,32 @@ if launch_pos < 0 or text.find(launch_marker, launch_pos + 1) >= 0:
 trace_arm = '''adb shell "su -c 'mkdir $TRACE_INSTANCE; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_INSTANCE/events/enable; echo $TRACE_BUFFER_KB > $TRACE_INSTANCE/buffer_size_kb; echo 1 > $TRACE_INSTANCE/options/overwrite; cat $TRACE_ROOT/events/wlan/dp_rx_udp_pkt/format > $QUEST_TMP.trace-format; echo 1 > $TRACE_EVENT/enable; echo 1 > $TRACE_INSTANCE/tracing_on'" >/dev/null 2>&1 || fail "could not arm bounded Quest wlan:dp_rx_udp_pkt trace"
 RADIO_TRACE_ARMED=1
 adb shell "su -c 'grep -q 1 $TRACE_INSTANCE/tracing_on && grep -q 1 $TRACE_EVENT/enable'" >/dev/null 2>&1 || fail "Quest WLAN trace did not remain armed"
-python3 - "$QUEST_IP" <<'PYTRACEPROBE'
-import socket, sys
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.sendto(b"helix-trace-preflight", (sys.argv[1], 9))
-s.close()
-PYTRACEPROBE
-sleep 0.2
-adb shell "su -c 'grep -q dp_rx_udp_pkt $TRACE_INSTANCE/trace'" >/dev/null 2>&1 || fail "Quest wlan:dp_rx_udp_pkt did not observe the setup UDP probe"
-adb shell "su -c ': > $TRACE_INSTANCE/trace'" >/dev/null 2>&1 || fail "could not clear Quest WLAN trace after setup probe"
 adb shell "su -c '$QUEST_NOHUP sh -c \"sleep $TRACE_WATCHDOG_SECONDS; test -f $QUEST_TMP.tcpdump.pid && kill -2 \\$(cat $QUEST_TMP.tcpdump.pid) 2>/dev/null || true; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable\" >/dev/null 2>&1 </dev/null & echo \\$! > $QUEST_TMP.trace-watchdog.pid'" >/dev/null 2>&1 || fail "could not launch Quest trace/capture safety watchdog"
 
 '''
 text = text[:launch_pos] + trace_arm + text[launch_pos:]
+
+# Once Quest tcpdump is confirmed live, send an explicit three-port marker.
+# This simultaneously proves dp_rx_udp_pkt activity and creates a direct
+# trace-clock <-> Quest-PCAP synchronization point without relying on cycling
+# IPv4 IDs.
+quest_ready = '''    fail "Quest tcpdump did not report an active capture loop before USB detach"
+fi
+'''
+sync_start = quest_ready + '''python3 - "$QUEST_IP" <<'PYTRACESYNCSTART'
+import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+for port in (49171, 49172, 49173):
+    s.sendto(b"helix-trace-sync-start", (sys.argv[1], port))
+    time.sleep(0.02)
+s.close()
+PYTRACESYNCSTART
+sleep 0.2
+for port in 49171 49172 49173; do
+    adb shell "su -c 'grep -q \\\"dstport=$port\\\" $TRACE_INSTANCE/trace'" >/dev/null 2>&1 || fail "Quest wlan:dp_rx_udp_pkt did not observe sync-start UDP port $port"
+done
+'''
+replace_once(quest_ready, sync_start, "trace sync-start marker")
 
 host_launch_fragment = 'sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap"'
 host_launch_pos = text.find(host_launch_fragment)
@@ -138,6 +155,19 @@ replace_once(
     '[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"\n\nsnapshot_quest after\n',
     '''[[ "$ADB_SERIAL_AFTER" == "$ADB_SERIAL" ]] || fail "reconnected ADB device does not match the Quest used for setup"
 
+python3 - "$QUEST_IP" <<'PYTRACESYNCEND'
+import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+for port in (49271, 49272, 49273):
+    s.sendto(b"helix-trace-sync-end", (sys.argv[1], port))
+    time.sleep(0.02)
+s.close()
+PYTRACESYNCEND
+sleep 0.2
+for port in 49271 49272 49273; do
+    adb shell "su -c 'grep -q \\\"dstport=$port\\\" $TRACE_INSTANCE/trace'" >/dev/null 2>&1 || fail "Quest wlan:dp_rx_udp_pkt did not observe sync-end UDP port $port"
+done
+
 adb shell "su -c 'test -f $QUEST_TMP.trace-watchdog.pid && kill \\$(cat $QUEST_TMP.trace-watchdog.pid) 2>/dev/null || true; echo 0 > $TRACE_INSTANCE/tracing_on; echo 0 > $TRACE_EVENT/enable; cat $TRACE_INSTANCE/trace > $QUEST_TMP.wlan-dp-rx-udp.trace; for s in $TRACE_INSTANCE/per_cpu/cpu*/stats; do echo ===== \\$s =====; cat \\$s; done > $QUEST_TMP.trace-stats'" >/dev/null 2>&1 || fail "could not stop/preserve Quest WLAN trace after USB reconnect"
 RADIO_TRACE_ARMED=0
 adb exec-out su -c "cat '$QUEST_TMP.wlan-dp-rx-udp.trace'" >"$OUT/quest-wlan-dp-rx-udp.trace" || fail "could not retrieve Quest WLAN driver trace"
@@ -147,7 +177,7 @@ adb exec-out su -c "cat '$QUEST_TMP.trace-stats'" >"$OUT/quest-wlan-trace-stats.
 
 snapshot_quest after
 ''',
-    "stop and retrieve Quest WLAN trace",
+    "sync-stop-retrieve Quest WLAN trace",
 )
 
 replace_once(
@@ -174,10 +204,10 @@ def pos(fragment: str, label: str) -> int:
 
 
 p_format = pos('format lacks required field', "trace format gate")
-p_probe = pos('did not observe the setup UDP probe', "live tracepoint gate")
 p_trace = pos('could not arm bounded Quest wlan:dp_rx_udp_pkt trace', "Quest driver trace arm")
 p_watchdog = pos('could not launch Quest trace/capture safety watchdog', "trace/capture safety watchdog")
 p_quest_verify = pos('detached Quest tcpdump exited before USB detach', "Quest tcpdump pre-detach verification")
+p_sync_start = pos('did not observe sync-start UDP port', "live trace/sync-start gate")
 p_host_launch = pos(host_launch_fragment, "host tcpdump launch")
 p_host_verify = pos('host tcpdump did not report an active capture loop before CAPTURE ARMED', "host tcpdump verification")
 p_usb_prompt = pos('USB-DETACHED WORKLOAD MODE', "USB detach prompt")
@@ -185,19 +215,24 @@ p_zero_adb = pos('Quest is still visible to ADB; unplug USB and ensure wireless 
 p_start = pos('capture_start_epoch_ns=$CAPTURE_START_EPOCH_NS', "workload start timestamp")
 p_armed = pos('CAPTURE ARMED. No ADB session remains attached during the workload.', "capture armed banner")
 p_reconnect = pos('WORKLOAD COMPLETE', "USB reconnect boundary")
+p_sync_end = pos('did not observe sync-end UDP port', "trace sync-end gate")
 p_trace_stop = pos('could not stop/preserve Quest WLAN trace after USB reconnect', "trace stop/retrieval")
 
-order = [p_format, p_trace, p_probe, p_watchdog, p_quest_verify, p_host_launch, p_host_verify, p_usb_prompt, p_zero_adb, p_start, p_armed, p_reconnect, p_trace_stop]
+order = [p_format, p_trace, p_watchdog, p_quest_verify, p_sync_start, p_host_launch, p_host_verify, p_usb_prompt, p_zero_adb, p_start, p_armed, p_reconnect, p_sync_end, p_trace_stop]
 if order != sorted(order):
-    raise SystemExit("generated-path audit: observer/preflight/detach/start/stop ordering is wrong")
+    raise SystemExit("generated-path audit: observer/sync/detach/start/stop ordering is wrong")
 
 workload_window = text[p_zero_adb:p_reconnect]
 for forbidden in ('adb shell', 'adb exec-out', 'adb devices', 'sudo -v'):
     if forbidden in workload_window:
         raise SystemExit(f"generated-path audit: {forbidden!r} remains inside detached workload window")
 
-for required in ('MAX_CAPTURE_SECONDS=480', 'TRACE_WATCHDOG_SECONDS=570', 'cleanup_all()', 'quest-wlan-trace-stats.txt', 'kill -2 \\$(cat $QUEST_TMP.tcpdump.pid)'):
+for required in (
+    'MAX_CAPTURE_SECONDS=480', 'TRACE_WATCHDOG_SECONDS=570', 'cleanup_all()',
+    'quest-wlan-trace-stats.txt', 'TRACE_SYNC_START_PORTS="49171,49172,49173"',
+    'TRACE_SYNC_END_PORTS="49271,49272,49273"',
+):
     if required not in text:
-        raise SystemExit(f"generated-path audit: missing required safety element {required!r}")
+        raise SystemExit(f"generated-path audit: missing required safety/evidence element {required!r}")
 
 path.write_text(text)

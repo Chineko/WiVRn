@@ -46,12 +46,14 @@ void default_idr_handler::on_feedback(const from_headset::feedback & f)
 		                   }
 	                   },
 	                   [this, &f](running & r) {
-		                   if (not f.sent_to_decoder and f.frame_index >= r.last_ack and not is_non_ref_frame(f.frame_index))
+		                   const bool is_non_ref =
+		                           non_ref_frames[f.frame_index % non_ref_frames.size()] == f.frame_index;
+		                   if (not f.sent_to_decoder and f.frame_index >= r.last_ack and not is_non_ref)
 		                   {
 			                   U_LOG_I("IDR frame needed on stream %d", f.stream_index);
 			                   U_LOG_D("frame_idx: %ld, last_ack = %ld",
-			                           f.frame_index,
-			                           r.last_ack);
+					           f.frame_index,
+					           r.last_ack);
 			                   state = need_idr{};
 		                   }
 		                   else if (f.received_from_decoder)
@@ -104,6 +106,7 @@ void default_idr_handler::set_non_ref(uint64_t frame_index)
 
 bool default_idr_handler::is_non_ref_frame(uint64_t frame_index)
 {
+	std::unique_lock lock(mutex);
 	return non_ref_frames[frame_index % non_ref_frames.size()] == frame_index;
 }
 
@@ -128,9 +131,9 @@ default_idr_handler::frame_type default_idr_handler::get_type(uint64_t frame_ind
 		                          if (frame_index < s.idr_id)
 		                          {
 			                          U_LOG_I("IDR frame retargeted on stream %d from %llu to in-flight frame %llu",
-			                                  stream_idx,
-			                                  static_cast<unsigned long long>(s.idr_id),
-			                                  static_cast<unsigned long long>(frame_index));
+						          stream_idx,
+						          static_cast<unsigned long long>(s.idr_id),
+						          static_cast<unsigned long long>(frame_index));
 			                          s.idr_id = frame_index;
 			                          return frame_type::i;
 		                          }

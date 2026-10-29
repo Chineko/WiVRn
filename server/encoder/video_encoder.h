@@ -158,7 +158,29 @@ private:
 	uint64_t helix_gap_report_delay_total_us = 0;
 	uint64_t helix_gap_report_delay_max_us = 0;
 
+	// Helix bounded time-diverse recovery prototype. Protect complete, bounded
+	// NVENC reference frames only; never send a partial recovery copy.
+	static constexpr size_t helix_td_max_shards = 48;
+	static constexpr uint64_t helix_td_budget_divisor = 5; // <= 20% fresh payload long-run
+	static constexpr uint64_t helix_td_credit_cap_bytes =
+	        helix_td_max_shards * to_headset::video_stream_data_shard::max_payload_size * 2;
+	bool helix_td_enabled = false;
+	uint64_t helix_td_credit_bytes = 0;
+	std::optional<uint64_t> helix_td_pending_frame;
+	uint64_t helix_td_fresh_bytes = 0;
+	uint64_t helix_td_replay_bytes = 0;
+	uint64_t helix_td_reference_frames = 0;
+	uint64_t helix_td_scheduled_frames = 0;
+	uint64_t helix_td_replayed_frames = 0;
+	uint64_t helix_td_replayed_shards = 0;
+	uint64_t helix_td_skipped_oversize = 0;
+	uint64_t helix_td_skipped_budget = 0;
+	uint64_t helix_td_expired = 0;
+	uint64_t helix_td_send_errors = 0;
+
 	bool retransmit_cached(uint64_t packet_sequence);
+	void helix_send_time_diverse_replay(uint64_t next_frame_idx);
+	void helix_finish_time_diverse_frame(bool control);
 
 protected:
 	std::atomic_uint32_t pending_bitrate;

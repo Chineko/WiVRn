@@ -62,11 +62,12 @@ bash "$USB_RUN"
 
 # The proven base reducer runs during capture teardown and may initially copy
 # the full text trace. Trim only that copied artifact immediately; the raw trace
-# remains untouched in $OUT for radio analysis and later forensic inspection.
+# and the already-created archive remain preserved until replacement succeeds.
 REDUCED="${OUT}-reduced"
 ARCHIVE="${OUT}-reduced.tar.gz"
 [[ -d "$REDUCED" ]] || { echo "expected reduced directory is missing: $REDUCED" >&2; exit 1; }
-rm -f "$REDUCED/quest-wlan-dp-rx-udp.trace" "$ARCHIVE"
+[[ -s "$ARCHIVE" ]] || { echo "initial reduced archive is missing: $ARCHIVE" >&2; exit 1; }
+rm -f "$REDUCED/quest-wlan-dp-rx-udp.trace"
 
 python3 "$RADIO_REDUCER" "$OUT"
 [[ -s "$OUT/radio-attribution-summary.txt" ]] || { echo "radio attribution summary is missing" >&2; exit 1; }
@@ -76,7 +77,7 @@ TMP_ARCHIVE="${ARCHIVE}.tmp"
 rm -f "$TMP_ARCHIVE"
 tar -C "$(dirname "$REDUCED")" -czf "$TMP_ARCHIVE" "$(basename "$REDUCED")"
 [[ -s "$TMP_ARCHIVE" ]] || { echo "temporary reduced radio attribution archive is empty" >&2; exit 1; }
-mv "$TMP_ARCHIVE" "$ARCHIVE"
+mv -f "$TMP_ARCHIVE" "$ARCHIVE"
 
 trap - EXIT INT TERM
 rm -f "$DRY_CAPTURE"

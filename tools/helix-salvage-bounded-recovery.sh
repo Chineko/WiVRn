@@ -10,12 +10,11 @@ EXPECTED_FAILED_HEAD="2e74030b5f03d63a665e96f70890a1b1d5b77141"
 
 fail() { echo "Helix salvage: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"; }
-for cmd in git grep python3 sort tail; do need "$cmd"; done
+for cmd in awk find git grep python3 sort; do need "$cmd"; done
 
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "expected branch $EXPECTED_BRANCH"
 
-# Find only completed evidence directories from the failed v2/v3 run class.
-mapfile -t candidates < <(find "$HOME" -maxdepth 1 -type d -name 'helix-bounded-recovery-*' -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
+mapfile -t candidates < <(find "$HOME" -maxdepth 1 -type d -name 'helix-bounded-recovery-*' -printf '%T@\t%p\n' 2>/dev/null | sort -n | awk -F '\t' '{print $2}')
 [[ ${#candidates[@]} -gt 0 ]] || fail "no helix-bounded-recovery output directory found"
 OUT=${candidates[-1]}
 META="$OUT/metadata.txt"
@@ -32,24 +31,23 @@ runtime_head=$(awk -F= '$1=="runtime_head" {print $2; exit}' "$META")
 runtime_short=${runtime_head:0:8}
 grep -Fq "$runtime_short" "$SERVER" || fail "server artifact does not contain runtime id $runtime_short"
 
-# The original v2 control flow could reach RUNTIME TEST ARMED only after:
-#   * clean APK rebuild,
-#   * adb install of org.meumeu.wivrn.local,
-#   * readback of installed base.apk,
-#   * native-library scan finding runtime_short,
-#   * force-stop + automated launch of that exact package.
-# The missing end-of-run startup line is therefore treated as a retention failure,
-# not as proof of a mismatched APK. This salvage does not claim self-contained
-# Quest provenance; it records that limitation explicitly.
+# The failed v2 control flow could reach RUNTIME TEST ARMED only after a clean
+# APK rebuild, install, installed-base.apk readback, native-library identity
+# scan, force-stop, and automated launch of org.meumeu.wivrn.local. The final
+# startup-line grep was the failed retention assumption. Salvage therefore keeps
+# Quest provenance explicitly non-self-contained rather than pretending the
+# retained log alone proves identity.
 python3 - "$SERVER" "$QUEST" "$RESULT" "$runtime_head" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-server_path, quest_path, out_path, runtime_head = map(Path, sys.argv[1:4]) + [sys.argv[4]] if False else (Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+server_path = Path(sys.argv[1])
+quest_path = Path(sys.argv[2])
+out_path = Path(sys.argv[3])
+runtime_head = sys.argv[4]
 server = server_path.read_text(errors="replace")
 quest = quest_path.read_text(errors="replace")
-out = out_path
 
 def count(text, pattern):
     return len(re.findall(pattern, text, re.M))
@@ -114,7 +112,7 @@ if summary:
     lines += ['', 'server_time_diverse_summaries:', *summary]
 if rtx_summary:
     lines += ['', 'quest_rtx_summary:', rtx_summary[-1]]
-out.write_text('\n'.join(lines) + '\n')
+out_path.write_text('\n'.join(lines) + '\n')
 print('\n'.join(lines))
 PY
 

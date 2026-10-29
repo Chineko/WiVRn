@@ -18,7 +18,6 @@ TRACE_RE = re.compile(
     r"(?P<ts>\d+\.\d+):\s+dp_rx_udp_pkt:\s+.*?"
     r"\bip_id=(?P<ip>\d+)\s+srcport=(?P<src>\d+)\s+dstport=(?P<dst>-?\d+)"
 )
-TRACE_ALIGN_MIN_MATCHES = 100
 TRACE_ALIGN_MAX_MAD = 0.010
 TRACE_LOOKUP_SLOP = 0.020
 QUEST_SEARCH_SLOP = 0.250
@@ -29,6 +28,7 @@ MIN_LOCAL_MATCH_RATIO = 0.90
 MIN_BASELINE_PACKETS = 50
 MIN_BASELINE_TRACE_RATIO = 0.90
 MIN_MISSING_PACKETS = 10
+MIN_STREAM_PORT_PAIR_PACKETS = 100
 DRIVER_PRESENT_DECISIVE_RATIO = 0.80
 DRIVER_ABSENT_DECISIVE_RATIO = 0.10
 DECISIVE_CLASSES = {
@@ -76,49 +76,49 @@ def parse_trace(path: Path):
     return out
 
 
-def pcap_port_pairs(path: Path, host_ip: str, quest_ip: str):
-    pairs = set()
+def parse_ports(raw: str):
+    ports = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item.isdigit():
+            ports.append(int(item))
+    return ports
+
+
+def pcap_port_pair_counts(path: Path, host_ip: str, quest_ip: str):
+    counts = collections.Counter()
     for _ts, frame, *_ in base.iter_pcap(path):
         key = driver_key(frame, host_ip, quest_ip)
         if key is not None:
-            pairs.add((key[1], key[2]))
-    return pairs
+            counts[(key[1], key[2])] += 1
+    return counts
 
 
-def signature_map(records):
-    result = collections.defaultdict(list)
-    for i in range(1, len(records) - 1):
-        sig = (records[i - 1][1], records[i][1], records[i + 1][1])
-        result[sig].append(records[i][0])
-    return result
+def sync_trace_to_quest(raw_trace_records, quest_pcap, host_ip, quest_ip, sync_ports):
+    trace_by_port = collections.defaultdict(list)
+    for ts, key in raw_trace_records:
+        if key[2] in sync_ports:
+            trace_by_port[key[2]].append(ts)
 
-
-def align_trace_to_quest(trace_records, quest_pcap, host_ip, quest_ip):
-    trace_sigs = signature_map(trace_records)
-    wanted = set(trace_sigs)
-    quest_matches = collections.defaultdict(list)
-    prev2 = prev1 = None
+    quest_by_port = collections.defaultdict(list)
     for ts, frame, *_ in base.iter_pcap(quest_pcap):
         key = driver_key(frame, host_ip, quest_ip)
-        if key is None:
-            continue
-        cur = (ts, key)
-        if prev2 is not None and prev1 is not None:
-            sig = (prev2[1], prev1[1], cur[1])
-            if sig in wanted:
-                quest_matches[sig].append(prev1[0])
-        prev2, prev1 = prev1, cur
+        if key is not None and key[2] in sync_ports:
+            quest_by_port[key[2]].append(ts)
 
     offsets = []
-    for sig, trace_times in trace_sigs.items():
-        quest_times = quest_matches.get(sig, ())
-        if len(trace_times) == 1 and len(quest_times) == 1:
-            offsets.append(quest_times[0] - trace_times[0])
-    if len(offsets) < TRACE_ALIGN_MIN_MATCHES:
-        return None, None, len(offsets)
+    used = []
+    for port in sync_ports:
+        if not trace_by_port[port] or not quest_by_port[port]:
+            continue
+        # The end marker is emitted once per port immediately before trace stop.
+        offsets.append(quest_by_port[port][-1] - trace_by_port[port][-1])
+        used.append(port)
+    if len(offsets) != len(sync_ports) or len(offsets) < 3:
+        return None, None, used
     offset = statistics.median(offsets)
     mad = statistics.median(abs(x - offset) for x in offsets)
-    return offset, mad, len(offsets)
+    return offset, mad, used
 
 
 def collect_pcap_window(path, start, end, host_ip, quest_ip):
@@ -166,8 +166,7 @@ def main():
     server_log = src / "server-log.txt"
 
     blockers = []
-    required = (host_pcap, quest_pcap, trace_path, format_path, stats_path, server_log)
-    for p in required:
+    for p in (host_pcap, quest_pcap, trace_path, format_path, stats_path, server_log):
         if not p.exists() or p.stat().st_size == 0:
             blockers.append(f"missing_or_empty:{p.name}")
     if not host_ip or not quest_ip:
@@ -178,16 +177,39 @@ def main():
         if field not in fmt:
             blockers.append(f"trace_format_missing:{field}")
 
-    port_pairs = set()
-    if quest_pcap.exists() and host_ip and quest_ip:
-        port_pairs = pcap_port_pairs(quest_pcap, host_ip, quest_ip)
-    if not port_pairs:
-        blockers.append("no_pc_to_quest_udp_port_pairs")
+    sync_end_ports = parse_ports(metadata.get("quest_driver_trace_sync_end_ports", ""))
+    if len(sync_end_ports) != 3:
+        blockers.append("trace_sync_end_ports_missing_or_invalid")
 
     raw_trace_records = parse_trace(trace_path) if trace_path.exists() else []
-    trace_records = [r for r in raw_trace_records if (r[1][1], r[1][2]) in port_pairs]
+    if not raw_trace_records:
+        blockers.append("no_parseable_dp_rx_udp_pkt_records")
+
+    port_counts = collections.Counter()
+    if quest_pcap.exists() and host_ip and quest_ip:
+        port_counts = pcap_port_pair_counts(quest_pcap, host_ip, quest_ip)
+    sync_set = set(sync_end_ports) | set(parse_ports(metadata.get("quest_driver_trace_sync_start_ports", "")))
+    stream_pairs = {
+        pair for pair, count in port_counts.items()
+        if count >= MIN_STREAM_PORT_PAIR_PACKETS and pair[1] not in sync_set
+    }
+    if not stream_pairs:
+        blockers.append("no_high_volume_pc_to_quest_udp_port_pairs")
+
+    trace_records = [r for r in raw_trace_records if (r[1][1], r[1][2]) in stream_pairs]
     if not trace_records:
-        blockers.append("no_parseable_driver_records_for_pc_to_quest_udp_ports")
+        blockers.append("no_driver_records_for_high_volume_pc_to_quest_udp_ports")
+
+    trace_offset = trace_mad = None
+    sync_used = []
+    if raw_trace_records and quest_pcap.exists() and host_ip and quest_ip and sync_end_ports:
+        trace_offset, trace_mad, sync_used = sync_trace_to_quest(
+            raw_trace_records, quest_pcap, host_ip, quest_ip, sync_end_ports
+        )
+        if trace_offset is None:
+            blockers.append(f"trace_sync_alignment_ports_seen:{','.join(map(str, sync_used))}")
+        elif trace_mad is None or trace_mad > TRACE_ALIGN_MAX_MAD:
+            blockers.append(f"trace_sync_alignment_mad:{trace_mad}")
 
     tz = base.parse_offset(metadata.get("host_tz_offset", ""))
     capture_start_ns = base.epoch_ns(metadata, "capture_start_epoch_ns")
@@ -199,15 +221,7 @@ def main():
     if not mapped_events:
         blockers.append("no_fully_mapped_gap_events")
 
-    trace_offset = trace_mad = None
-    trace_align_matches = 0
     quest_offset = None
-    if trace_records and quest_pcap.exists() and host_ip and quest_ip:
-        trace_offset, trace_mad, trace_align_matches = align_trace_to_quest(trace_records, quest_pcap, host_ip, quest_ip)
-        if trace_offset is None:
-            blockers.append(f"trace_alignment_matches:{trace_align_matches}<{TRACE_ALIGN_MIN_MATCHES}")
-        elif trace_mad is None or trace_mad > TRACE_ALIGN_MAX_MAD:
-            blockers.append(f"trace_alignment_mad:{trace_mad}")
     if host_pcap.exists() and quest_pcap.exists() and host_ip and quest_ip:
         try:
             quest_offset, _qmad, _qm = base.derive_quest_clock_offset(host_pcap, quest_pcap, host_ip, quest_ip)
@@ -219,7 +233,7 @@ def main():
         blockers.append("trace_buffer_reported_dropped_events")
 
     event_results = []
-    if trace_offset is not None and quest_offset is not None:
+    if trace_offset is not None and quest_offset is not None and trace_records:
         trace_times_by_key = collections.defaultdict(list)
         for ts, key in trace_records:
             trace_times_by_key[key].append(ts)
@@ -261,6 +275,8 @@ def main():
 
             baseline = baseline_trace = missing = missing_trace = 0
             for hts, fp, key in host_context:
+                if (key[1], key[2]) not in stream_pairs:
+                    continue
                 predicted_q = hts + local_q_offset
                 q_present = has_time(quest_fp_times.get(fp), predicted_q, QUEST_LOOKUP_SLOP)
                 predicted_trace = predicted_q - trace_offset
@@ -307,12 +323,13 @@ def main():
     lines = [
         f"source={src}",
         f"trace_event=wlan:dp_rx_udp_pkt",
-        f"pc_to_quest_udp_port_pairs={','.join(f'{a}:{b}' for a, b in sorted(port_pairs)) if port_pairs else 'unavailable'}",
-        f"trace_records_all_udp={len(raw_trace_records)}",
-        f"trace_records_pc_port_pairs={len(trace_records)}",
+        f"trace_sync_end_ports={','.join(map(str, sync_end_ports)) if sync_end_ports else 'unavailable'}",
+        f"trace_sync_ports_used={','.join(map(str, sync_used)) if sync_used else 'unavailable'}",
         f"trace_to_quest_pcap_offset_seconds={trace_offset}",
-        f"trace_alignment_mad_seconds={trace_mad}",
-        f"trace_alignment_unique_triples={trace_align_matches}",
+        f"trace_sync_alignment_mad_seconds={trace_mad}",
+        f"pc_to_quest_stream_port_pairs={','.join(f'{a}:{b}' for a, b in sorted(stream_pairs)) if stream_pairs else 'unavailable'}",
+        f"trace_records_all_udp={len(raw_trace_records)}",
+        f"trace_records_stream_ports={len(trace_records)}",
         f"trace_overrun_samples={','.join(map(str, overruns)) if overruns else 'unavailable'}",
         f"trace_dropped_samples={','.join(map(str, dropped)) if dropped else 'unavailable'}",
         f"mapped_gap_events={len(mapped_events)}",

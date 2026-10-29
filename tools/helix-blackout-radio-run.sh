@@ -27,7 +27,7 @@ bash -n "$TMP_CAPTURE"
 bash -n "$TMP_RUN"
 
 echo "Quest WLAN datapath trace will be collected in the same USB-detached blackout run."
-echo "After the first real blackout, end the workload promptly so the bounded in-RAM trace retains that event."
+echo "Aim for 2-3 characteristic lag events, then end the workload promptly so they remain in the bounded in-RAM trace."
 
 bash "$TMP_RUN"
 '''

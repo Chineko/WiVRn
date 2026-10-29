@@ -175,7 +175,20 @@ run = replace_once(
 run_out.write_text(run)
 PY
 
+# Optional, explicit post-generation hook. The hook receives the exact capture
+# artifact that will be executed. It must fail closed on any mismatch.
+if [[ -n "${HELIX_CAPTURE_PATCH:-}" ]]; then
+    [[ -f "$HELIX_CAPTURE_PATCH" ]] || { echo "missing HELIX_CAPTURE_PATCH=$HELIX_CAPTURE_PATCH" >&2; exit 1; }
+    python3 "$HELIX_CAPTURE_PATCH" "$TMP_CAPTURE"
+fi
+
 bash -n "$TMP_CAPTURE"
 bash -n "$TMP_RUN"
+
+# Expose the exact final artifact to an optional audit command before runtime.
+if [[ -n "${HELIX_CAPTURE_AUDIT:-}" ]]; then
+    [[ -x "$HELIX_CAPTURE_AUDIT" || -f "$HELIX_CAPTURE_AUDIT" ]] || { echo "missing HELIX_CAPTURE_AUDIT=$HELIX_CAPTURE_AUDIT" >&2; exit 1; }
+    "$HELIX_CAPTURE_AUDIT" "$TMP_CAPTURE"
+fi
 
 bash "$TMP_RUN"

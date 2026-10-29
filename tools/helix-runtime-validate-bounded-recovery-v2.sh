@@ -148,6 +148,18 @@ SERVER_EXE=$(readlink -f "/proc/$SERVER_PID/exe" 2>/dev/null || true)
 grep -F "$RUNTIME_SHORT" "$SERVER_LOG" >/dev/null || fail "new server log does not contain runtime id $RUNTIME_SHORT before arm"
 
 adb shell monkey -p "$PACKAGE" 1 >/dev/null 2>&1 || fail "could not launch Quest client"
+QUEST_PROVENANCE="$OUT/quest-startup-provenance.txt"
+: >"$QUEST_PROVENANCE"
+for _ in $(seq 1 120); do
+    if adb logcat -d -v threadtime 2>/dev/null \
+        | grep -F "Starting WiVRn version" \
+        | grep -F "$RUNTIME_HEAD" >"$QUEST_PROVENANCE"; then
+        [[ -s "$QUEST_PROVENANCE" ]] && break
+    fi
+    sleep 0.1
+done
+[[ -s "$QUEST_PROVENANCE" ]] || fail "launched Quest client did not log runtime id $RUNTIME_SHORT before arm"
+printf 'quest_startup_provenance=%s\n' "$QUEST_PROVENANCE" >>"$OUT/metadata.txt"
 
 echo
 echo "RUNTIME TEST ARMED"
@@ -155,6 +167,7 @@ echo "  source prototype: ${SOURCE_BASE:0:12}"
 echo "  matching runtime: ${RUNTIME_HEAD:0:12}"
 echo "  server pid/exe:   $SERVER_PID / $SERVER_EXE"
 echo "  server log:       $SERVER_LOG"
+echo "  Quest provenance: $QUEST_PROVENANCE"
 echo "  output:           $OUT"
 echo
 echo "Unplug USB, use VR normally, and reproduce the short-lag workload."
@@ -186,7 +199,7 @@ printf 'server_log_source=%s\nserver_pid=%s\nserver_exe=%s\nfinished_utc=%s\n' \
     "$SERVER_LOG" "$SERVER_PID" "$SERVER_EXE" "$(date -u +%FT%TZ)" >>"$OUT/metadata.txt"
 
 grep -F "$RUNTIME_SHORT" "$OUT/server-log.txt" >/dev/null || fail "server log lost runtime id $RUNTIME_SHORT"
-grep -F "$RUNTIME_SHORT" "$OUT/quest-logcat.txt" >/dev/null || fail "Quest runtime log does not contain $RUNTIME_SHORT"
+grep -F "$RUNTIME_HEAD" "$QUEST_PROVENANCE" >/dev/null || fail "durable Quest startup provenance lost runtime id $RUNTIME_SHORT"
 
 echo "[7/7] Reducing bounded-recovery decision signals"
 python3 - "$OUT/server-log.txt" "$OUT/quest-logcat.txt" "$OUT/result.txt" <<'PY'

@@ -12,7 +12,7 @@ BASE_REDUCER="$ROOT/tools/helix-blackout-reduce.py"
 for path in "$USB_RUN" "$PATCH" "$AUDIT" "$RADIO_REDUCER" "$SELFTEST" "$BASE_REDUCER"; do
     [[ -f "$path" ]] || { echo "missing $path" >&2; exit 1; }
 done
-for cmd in adb awk bash cp date grep mktemp mv python3 rm sha256sum sleep sudo tar tr dirname basename; do
+for cmd in adb awk bash basename cp cut date dirname git grep mktemp mv python3 rm sha256sum sleep sudo tar tr; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "missing required host command: $cmd" >&2; exit 1; }
 done
 

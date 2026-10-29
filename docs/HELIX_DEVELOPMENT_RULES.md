@@ -596,7 +596,6 @@ The purpose is to build a streaming stack that fails gracefully, recovers quickl
 
 When complexity does not produce a measurable reliability or latency benefit, do not add it.
 
-
 ## 40. Keep conclusions proportional to the evidence
 
 Helix validation must distinguish clearly between what the evidence directly proves, what it strongly suggests, what remains ambiguous, and what is only a working hypothesis.
@@ -622,3 +621,66 @@ Rules:
 - Record important caveats and competing explanations in the validation document so later work does not silently promote an inference into a fact.
 
 A useful conclusion is not the strongest statement that can be made. It is the strongest statement the evidence can actually support.
+
+## 41. Minimize manual user-side workflow
+
+Helix development must not externalize avoidable setup, validation, capture, reduction, artifact matching, or repetitive debugging work to the user.
+
+Rules:
+
+1. Prefer one-command or otherwise consolidated workflows when several deterministic steps can be automated safely.
+2. Perform static checks, syntax checks, artifact identity checks, log reduction, and other machine-verifiable work before asking for a headset or manual runtime action.
+3. Do not ask the user to repeat a manual step merely because tooling can be incrementally patched around the previous failure. Consolidate the fix and re-audit first.
+4. If manual intervention is unavoidable, keep it bounded, explain exactly what decision-relevant purpose it serves, and avoid asking the user to classify information that existing telemetry can determine afterward.
+5. Preserve useful outputs from failed or non-decisive runs whenever practical so the user is not asked to reproduce the same event solely because analysis tooling was incomplete.
+6. A workflow that is technically correct but repeatedly wastes user attention is not complete.
+
+## 42. Require full local and whole-system audits before runtime validation
+
+Before any runtime/device validation of a meaningful Helix slice, complete two audits. These are mandatory gates, not optional review styles.
+
+### Audit A — local/function/final-artifact audit
+
+Audit the exact implementation that will execute, including generated or transformed artifacts where applicable. Check at minimum:
+
+- inputs, outputs, ownership, lifetimes, bounds, and cleanup;
+- error and abort paths;
+- syntax and build assumptions;
+- command and dependency availability;
+- resource limits, queue/state bounds, and concurrency behavior;
+- observer/instrumentation lifecycle;
+- serialization/protocol assumptions;
+- exact final generated scripts or artifacts rather than only their source fragments;
+- whether the implementation actually matches the intended design and success condition.
+
+Material blockers found by Audit A must be fixed before runtime validation.
+
+### Audit B — whole-system/experiment audit
+
+Audit the complete path from workload to engineering conclusion. Check at minimum:
+
+- the actual decision question and concrete success condition;
+- observation boundaries and what each signal really proves;
+- competing failure classes that remain plausible;
+- build/runtime/artifact identity and provenance;
+- clock-domain and timestamp assumptions;
+- capture, telemetry, and reduction integrity;
+- instrumentation and observer effects;
+- resource pressure introduced by the experiment itself;
+- whether a nominally successful run could still be non-decisive;
+- whether the proposed next action remains the highest-value step under Rules 24, 31, and 32.
+
+Material blockers found by Audit B must be fixed or the experiment's success condition must be explicitly narrowed before runtime validation.
+
+### Failure resets the audit gate
+
+Any preflight, generated-artifact, build, runtime-path, capture, teardown, retrieval, or analysis failure invalidates the prior audit status for that experiment. Before another user/device run:
+
+1. classify the failure;
+2. inspect the whole failure class rather than only the first symptom;
+3. perform a complete Audit A again on the entire final executable path;
+4. perform a complete Audit B again on the entire experiment and evidence chain;
+5. fix all material blockers found by either audit;
+6. only then permit another runtime validation attempt.
+
+Do not patch one hole, re-audit only the affected line or subsystem, and immediately ask for another run. The full experiment must earn its validation gate again.

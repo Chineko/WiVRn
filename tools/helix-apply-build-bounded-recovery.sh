@@ -55,20 +55,30 @@ for path, markers in checks.items():
         if marker not in text:
             raise SystemExit(f"error: transformed-source marker missing in {path}: {marker}")
 
-# Compile-gate correction: video_stream_data_shard::payload is a mutable span while
-# the replay cache owns bytes in a vector. Build an explicit span view; do not copy
-# or allocate. The vector remains alive under video_encoder::mutex through send_stream().
+# Compile-gate corrections for replay payload ownership/constness. The packet payload
+# type is std::span<uint8_t>, while the cache owns bytes in std::vector<uint8_t>.
+# Iterate the cache entry mutably so data() yields uint8_t*, then expose only a span
+# view for the synchronous send. No copy or allocation is introduced.
 p = Path("server/encoder/video_encoder.cpp")
 text = p.read_text()
-old = "packet.payload = entry.payload;"
-new = "packet.payload = std::span<uint8_t>{entry.payload.data(), entry.payload.size()};"
-if old in text:
-    if text.count(old) != 1:
-        raise SystemExit(f"error: expected one replay payload anchor, found {text.count(old)}")
-    text = text.replace(old, new, 1)
-    p.write_text(text)
-elif new not in text:
+old_loop = "for (const auto & entry: helix_rtx_cache)"
+new_loop = "for (auto & entry: helix_rtx_cache)"
+if old_loop in text:
+    if text.count(old_loop) != 1:
+        raise SystemExit(f"error: expected one replay loop anchor, found {text.count(old_loop)}")
+    text = text.replace(old_loop, new_loop, 1)
+elif new_loop not in text:
+    raise SystemExit("error: replay cache loop is neither original nor audited mutable form")
+
+old_payload = "packet.payload = entry.payload;"
+new_payload = "packet.payload = std::span<uint8_t>{entry.payload.data(), entry.payload.size()};"
+if old_payload in text:
+    if text.count(old_payload) != 1:
+        raise SystemExit(f"error: expected one replay payload anchor, found {text.count(old_payload)}")
+    text = text.replace(old_payload, new_payload, 1)
+elif new_payload not in text:
     raise SystemExit("error: replay payload assignment is neither original nor audited corrected form")
+p.write_text(text)
 PY
 
 # Only the three audited source files may be dirty. This preserves unrelated work.

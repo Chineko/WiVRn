@@ -8,9 +8,11 @@ QUEST_TMP="/data/local/tmp/helix-blackout-$STAMP"
 RUNTIME_BASE=${HELIX_RUNTIME_BASE:-ffdc6bb74a4cfafc1a03774f6e2413acfba9c60a}
 DASHBOARD_PID=""
 HOST_TCPDUMP_PID=""
-QUEST_CAPTURE_ADB_PID=""
-QUEST_LOGCAT_ADB_PID=""
+HOST_SAMPLER_PID=""
 CAPTURE_ACTIVE=0
+CAPTURE_BUFFER_KIB=16384
+QUEST_MIN_FREE_KB=1572864
+HOST_MIN_FREE_KB=2097152
 
 fail() {
     echo "Helix capture: $*" >&2
@@ -21,9 +23,36 @@ need() {
     command -v "$1" >/dev/null 2>&1 || fail "missing required host command: $1"
 }
 
-for cmd in adb awk cut date df git grep ip python3 sudo tcpdump timeout wc; do
+for cmd in adb awk cut date df git grep ip ping python3 sudo tcpdump timeout wc; do
     need "$cmd"
 done
+
+wifi_frequency_mhz() {
+    awk 'BEGIN{IGNORECASE=1} /frequency/ { for (i=1; i<=NF; i++) { v=$i; gsub(/[^0-9]/, "", v); if ((v+0) >= 5000 && (v+0) <= 8000) { print v; exit } } }'
+}
+
+wifi_bssid() {
+    awk 'BEGIN{IGNORECASE=1} /bssid/ { for (i=1; i<=NF; i++) { v=$i; gsub(/[,;]/, "", v); n=split(v, a, ":"); if (n == 6) { print tolower(v); exit } } }'
+}
+
+pcap_linktype() {
+    python3 - "$1" <<'PY'
+import struct, sys
+p=sys.argv[1]
+with open(p, "rb") as f:
+    h=f.read(24)
+if len(h)!=24:
+    raise SystemExit(2)
+magic=h[:4]
+formats={
+    b"\xd4\xc3\xb2\xa1":"<", b"\xa1\xb2\xc3\xd4":">",
+    b"\x4d\x3c\xb2\xa1":"<", b"\xa1\xb2\x3c\x4d":">",
+}
+if magic not in formats:
+    raise SystemExit(3)
+print(struct.unpack(formats[magic]+"I", h[20:24])[0])
+PY
+}
 
 cleanup_capture() {
     set +e
@@ -31,19 +60,16 @@ cleanup_capture() {
         if adb shell su -c "test -f $QUEST_TMP.tcpdump.pid" >/dev/null 2>&1; then
             adb shell su -c "kill -2 \$(cat $QUEST_TMP.tcpdump.pid) 2>/dev/null || true" >/dev/null 2>&1
         fi
-        if adb shell su -c "test -f $QUEST_TMP.logcat.pid" >/dev/null 2>&1; then
-            adb shell su -c "kill \$(cat $QUEST_TMP.logcat.pid) 2>/dev/null || true" >/dev/null 2>&1
-        fi
         if [[ -n "$HOST_TCPDUMP_PID" ]]; then
             sudo kill -2 "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || true
         fi
+        if [[ -n "$HOST_SAMPLER_PID" ]]; then
+            kill "$HOST_SAMPLER_PID" >/dev/null 2>&1 || true
+        fi
         sleep 1
-        [[ -n "$QUEST_CAPTURE_ADB_PID" ]] && kill "$QUEST_CAPTURE_ADB_PID" >/dev/null 2>&1 || true
-        [[ -n "$QUEST_LOGCAT_ADB_PID" ]] && kill "$QUEST_LOGCAT_ADB_PID" >/dev/null 2>&1 || true
         [[ -n "$HOST_TCPDUMP_PID" ]] && sudo kill -15 "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || true
-        [[ -n "$QUEST_CAPTURE_ADB_PID" ]] && wait "$QUEST_CAPTURE_ADB_PID" >/dev/null 2>&1 || true
-        [[ -n "$QUEST_LOGCAT_ADB_PID" ]] && wait "$QUEST_LOGCAT_ADB_PID" >/dev/null 2>&1 || true
         [[ -n "$HOST_TCPDUMP_PID" ]] && wait "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || true
+        [[ -n "$HOST_SAMPLER_PID" ]] && wait "$HOST_SAMPLER_PID" >/dev/null 2>&1 || true
         CAPTURE_ACTIVE=0
     fi
 }
@@ -84,30 +110,65 @@ HOST_IF=$(awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$H
 HOST_IP=$(awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$HOST_ROUTE")
 [[ -n "$HOST_IF" && -n "$HOST_IP" ]] || fail "could not determine host route to Quest $QUEST_IP"
 
+WIFI_STATUS_BEFORE=$(adb shell su -c 'cmd wifi status 2>/dev/null || true' | tr -d '\r')
+QUEST_FREQ_BEFORE=$(wifi_frequency_mhz <<<"$WIFI_STATUS_BEFORE")
+QUEST_BSSID_BEFORE=$(wifi_bssid <<<"$WIFI_STATUS_BEFORE")
+[[ "$QUEST_FREQ_BEFORE" =~ ^[0-9]+$ ]] || fail "could not determine Quest Wi-Fi frequency from 'cmd wifi status'"
+(( QUEST_FREQ_BEFORE >= 5925 && QUEST_FREQ_BEFORE <= 7125 )) || fail "Quest is not on 6 GHz before the run (frequency ${QUEST_FREQ_BEFORE} MHz)"
+[[ -n "$QUEST_BSSID_BEFORE" ]] || fail "could not determine Quest BSSID before the run"
+
 QUEST_TCPDUMP=$(adb shell su -c 'command -v tcpdump 2>/dev/null || which tcpdump 2>/dev/null' | tr -d '\r' | tail -n1)
+QUEST_NOHUP=$(adb shell su -c 'command -v nohup 2>/dev/null || which nohup 2>/dev/null' | tr -d '\r' | tail -n1)
 [[ -n "$QUEST_TCPDUMP" ]] || fail "tcpdump is not available on the rooted Quest"
+[[ -n "$QUEST_NOHUP" ]] || fail "nohup is not available on the rooted Quest; cannot detach capture cleanly"
 FILTER="udp and src host $HOST_IP and dst host $QUEST_IP"
-CAPTURE_BUFFER_KIB=16384
 
 tcpdump -d "$FILTER" >/dev/null 2>&1 || fail "host tcpdump rejected capture filter: $FILTER"
 adb shell su -c "$QUEST_TCPDUMP -d '$FILTER'" >/dev/null 2>&1 || fail "Quest tcpdump rejected capture filter: $FILTER"
 
-PRE="$QUEST_TMP-preflight.pcap"
-adb shell su -c "rm -f $PRE" >/dev/null 2>&1 || true
-if ! timeout 8s adb shell su -c "$QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -c 1 -w $PRE" >/dev/null 2>&1; then
-    fail "Quest tcpdump preflight failed on $QUEST_IF; stop before doing a VR run"
-fi
-PRE_BYTES=$(adb shell su -c "wc -c < $PRE" 2>/dev/null | tr -d '\r ' || echo 0)
-[[ "$PRE_BYTES" =~ ^[0-9]+$ && "$PRE_BYTES" -gt 24 ]] || fail "Quest tcpdump preflight did not produce a valid local PCAP"
-adb shell su -c "rm -f $PRE" >/dev/null 2>&1 || true
-
 QUEST_FREE_KB=$(adb shell su -c 'df -Pk /data/local/tmp 2>/dev/null | tail -n1' | tr -d '\r' | awk '{print $4}')
 [[ "$QUEST_FREE_KB" =~ ^[0-9]+$ ]] || fail "could not determine free Quest storage"
-(( QUEST_FREE_KB >= 524288 )) || fail "Quest has less than 512 MiB free under /data/local/tmp"
+(( QUEST_FREE_KB >= QUEST_MIN_FREE_KB )) || fail "Quest has less than 1.5 GiB free under /data/local/tmp"
 HOST_FREE_KB=$(df -Pk "$OUT" | tail -n1 | awk '{print $4}')
-(( HOST_FREE_KB >= 1048576 )) || fail "host has less than 1 GiB free for paired captures"
+(( HOST_FREE_KB >= HOST_MIN_FREE_KB )) || fail "host has less than 2 GiB free for paired captures"
 
 sudo -v
+
+# Preflight the exact detached Quest-capture method and validate both PCAP link types.
+QUEST_PRE="$QUEST_TMP-preflight.pcap"
+QUEST_PRE_PID="$QUEST_TMP-preflight.pid"
+QUEST_PRE_ERR="$QUEST_TMP-preflight.err"
+HOST_PRE="$OUT/host-preflight.pcap"
+adb shell su -c "rm -f $QUEST_PRE $QUEST_PRE_PID $QUEST_PRE_ERR" >/dev/null 2>&1 || true
+adb shell su -c "sh -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -c 1 -w $QUEST_PRE -- \"icmp and host $HOST_IP\" >/dev/null 2>$QUEST_PRE_ERR </dev/null & echo \$! > $QUEST_PRE_PID'" >/dev/null 2>&1 \
+    || fail "could not launch detached Quest tcpdump preflight"
+
+sudo tcpdump -i "$HOST_IF" -s 96 -c 1 -w "$HOST_PRE" -- "icmp and host $QUEST_IP" >/dev/null 2>&1 &
+HOST_PRE_PID=$!
+sleep 0.3
+ping -c 1 -W 1 "$QUEST_IP" >/dev/null 2>&1 || true
+
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    if ! adb shell su -c "kill -0 \$(cat $QUEST_PRE_PID) 2>/dev/null" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+if adb shell su -c "kill -0 \$(cat $QUEST_PRE_PID) 2>/dev/null" >/dev/null 2>&1; then
+    adb shell su -c "kill -2 \$(cat $QUEST_PRE_PID) 2>/dev/null || true" >/dev/null 2>&1 || true
+    fail "detached Quest tcpdump preflight did not capture a packet"
+fi
+wait "$HOST_PRE_PID" || fail "host tcpdump preflight did not capture a packet"
+
+QUEST_PRE_LOCAL="$OUT/quest-preflight.pcap"
+adb pull "$QUEST_PRE" "$QUEST_PRE_LOCAL" >/dev/null 2>&1 || fail "could not pull detached Quest preflight PCAP"
+[[ "$(pcap_linktype "$HOST_PRE")" == "1" ]] || fail "host capture link type is not Ethernet (DLT_EN10MB=1)"
+[[ "$(pcap_linktype "$QUEST_PRE_LOCAL")" == "1" ]] || fail "Quest capture link type is not Ethernet (DLT_EN10MB=1)"
+tcpdump -nn -r "$HOST_PRE" -c 1 >/dev/null 2>&1 || fail "host preflight PCAP is unreadable"
+tcpdump -nn -r "$QUEST_PRE_LOCAL" -c 1 >/dev/null 2>&1 || fail "Quest preflight PCAP is unreadable"
+rm -f "$HOST_PRE" "$QUEST_PRE_LOCAL"
+adb shell su -c "rm -f $QUEST_PRE $QUEST_PRE_PID $QUEST_PRE_ERR" >/dev/null 2>&1 || true
+
 TOOL_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 
 {
@@ -117,14 +178,17 @@ TOOL_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
     echo "capture_tool_commit=$TOOL_COMMIT"
     echo "runtime_source_base=$RUNTIME_BASE"
     echo "runtime_source_equivalent=true"
-    echo "branch=$(git -C "$ROOT" branch --show-current)"
+    echo "attribution_scope=host_capture_to_quest_wlan"
     echo "host_ip=$HOST_IP"
     echo "host_if=$HOST_IF"
     echo "quest_ip=$QUEST_IP"
     echo "quest_if=$QUEST_IF"
+    echo "quest_bssid_before=$QUEST_BSSID_BEFORE"
+    echo "quest_frequency_mhz_before=$QUEST_FREQ_BEFORE"
     echo "capture_filter=$FILTER"
     echo "capture_buffer_kib=$CAPTURE_BUFFER_KIB"
-    echo "quest_epoch_ns=$(adb shell su -c 'date +%s%N' 2>/dev/null | tr -d '\r' || true)"
+    echo "quest_free_kb_before=$QUEST_FREE_KB"
+    echo "host_free_kb_before=$HOST_FREE_KB"
 } >"$OUT/metadata.txt"
 
 snapshot_host() {
@@ -146,68 +210,107 @@ snapshot_quest() {
     adb shell su -c 'cmd wifi status 2>/dev/null || true' >"$OUT/quest-wifi-status-$tag.txt" 2>&1 || true
 }
 
-snapshot_host before
-snapshot_quest before
-
-CAPTURE_START_EPOCH_NS=$(date +%s%N)
-echo "capture_start_epoch_ns=$CAPTURE_START_EPOCH_NS" >>"$OUT/metadata.txt"
-echo "capture_started_utc=$(date -u +%FT%TZ)" >>"$OUT/metadata.txt"
-
-adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.tcpdump.pid $QUEST_TMP.tcpdump.err $QUEST_TMP.logcat $QUEST_TMP.logcat.pid $QUEST_TMP.logcat.err" >/dev/null 2>&1 || true
-adb shell su -c 'logcat -c' >/dev/null 2>&1 || true
-CAPTURE_ACTIVE=1
-
-adb shell su -c "sh -c 'echo \$\$ > $QUEST_TMP.tcpdump.pid; exec $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -w $QUEST_TMP.pcap -- \"$FILTER\" 2>$QUEST_TMP.tcpdump.err'" >/dev/null 2>&1 &
-QUEST_CAPTURE_ADB_PID=$!
-adb shell su -c "sh -c 'echo \$\$ > $QUEST_TMP.logcat.pid; exec logcat -v threadtime -f $QUEST_TMP.logcat 2>$QUEST_TMP.logcat.err'" >/dev/null 2>&1 &
-QUEST_LOGCAT_ADB_PID=$!
-sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap" -- "$FILTER" >"$OUT/host-tcpdump.txt" 2>&1 &
-HOST_TCPDUMP_PID=$!
-
-sleep 1
-kill -0 "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || fail "host tcpdump exited before CAPTURE ARMED"
-kill -0 "$QUEST_CAPTURE_ADB_PID" >/dev/null 2>&1 || fail "Quest tcpdump ADB session exited before CAPTURE ARMED"
-kill -0 "$QUEST_LOGCAT_ADB_PID" >/dev/null 2>&1 || fail "Quest logcat ADB session exited before CAPTURE ARMED"
-adb shell su -c "kill -0 \$(cat $QUEST_TMP.tcpdump.pid) && kill -0 \$(cat $QUEST_TMP.logcat.pid)" >/dev/null 2>&1 || fail "Quest capture/logcat process did not survive startup"
-QUEST_PCAP_BYTES=$(adb shell su -c "wc -c < $QUEST_TMP.pcap" 2>/dev/null | tr -d '\r ' || echo 0)
-[[ "$QUEST_PCAP_BYTES" =~ ^[0-9]+$ && "$QUEST_PCAP_BYTES" -ge 24 ]] || fail "Quest PCAP header was not created"
-[[ -s "$OUT/host.pcap" ]] || fail "host PCAP header was not created"
+host_sampler() {
+    while :; do
+        {
+            echo "sample_epoch_ns=$(date +%s%N)"
+            echo "loadavg=$(cat /proc/loadavg 2>/dev/null || true)"
+            echo "cpu_pressure=$(tr '\n' ';' </proc/pressure/cpu 2>/dev/null || true)"
+            for stat in rx_bytes tx_bytes rx_packets tx_packets rx_dropped tx_dropped rx_errors tx_errors; do
+                value=$(cat "/sys/class/net/$HOST_IF/statistics/$stat" 2>/dev/null || echo unavailable)
+                echo "$stat=$value"
+            done
+            echo "softnet_begin"
+            cat /proc/net/softnet_stat 2>/dev/null || true
+            echo "softnet_end"
+            echo
+        } >>"$OUT/host-system-samples.txt"
+        sleep 1
+    done
+}
 
 DASHBOARD="$ROOT/build-dashboard/server/wivrn-dashboard"
 PREFIX="$ROOT/build-dashboard/dashboard/prefix.sh"
 if pgrep -f "$DASHBOARD" >/dev/null 2>&1; then
     echo "  dashboard: already running; current-run log events will be time-filtered"
 elif [[ -x "$DASHBOARD" && -f "$PREFIX" ]]; then
-    (cd "$ROOT"; bash -c 'source build-dashboard/dashboard/prefix.sh && exec build-dashboard/server/wivrn-dashboard') >"$OUT/dashboard-stdout.txt" 2>&1 &
+    (
+        cd "$ROOT"
+        bash -c 'source build-dashboard/dashboard/prefix.sh && exec build-dashboard/server/wivrn-dashboard'
+    ) >"$OUT/dashboard-stdout.txt" 2>&1 &
     DASHBOARD_PID=$!
     echo "  dashboard: launched (pid $DASHBOARD_PID)"
 else
     fail "existing dashboard build not found at $DASHBOARD"
 fi
 
+snapshot_host before
+snapshot_quest before
+adb shell su -c 'logcat -b all -c' >/dev/null 2>&1 || true
+
+CAPTURE_START_EPOCH_NS=$(date +%s%N)
+echo "capture_start_epoch_ns=$CAPTURE_START_EPOCH_NS" >>"$OUT/metadata.txt"
+echo "capture_started_utc=$(date -u +%FT%TZ)" >>"$OUT/metadata.txt"
+
+adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.tcpdump.pid $QUEST_TMP.tcpdump.err" >/dev/null 2>&1 || true
+adb shell su -c "sh -c '$QUEST_NOHUP $QUEST_TCPDUMP -Z root -B $CAPTURE_BUFFER_KIB -i $QUEST_IF -s 96 -w $QUEST_TMP.pcap -- \"$FILTER\" >/dev/null 2>$QUEST_TMP.tcpdump.err </dev/null & echo \$! > $QUEST_TMP.tcpdump.pid'" >/dev/null 2>&1 \
+    || fail "could not launch detached Quest tcpdump"
+
+sudo tcpdump -B "$CAPTURE_BUFFER_KIB" -i "$HOST_IF" -s 96 -w "$OUT/host.pcap" -- "$FILTER" >"$OUT/host-tcpdump.txt" 2>&1 &
+HOST_TCPDUMP_PID=$!
+host_sampler &
+HOST_SAMPLER_PID=$!
+CAPTURE_ACTIVE=1
+
+sleep 1
+kill -0 "$HOST_TCPDUMP_PID" >/dev/null 2>&1 || fail "host tcpdump exited before CAPTURE ARMED"
+kill -0 "$HOST_SAMPLER_PID" >/dev/null 2>&1 || fail "host sampler exited before CAPTURE ARMED"
+adb shell su -c "kill -0 \$(cat $QUEST_TMP.tcpdump.pid)" >/dev/null 2>&1 || fail "detached Quest tcpdump exited before CAPTURE ARMED"
+QUEST_PCAP_BYTES=$(adb shell su -c "wc -c < $QUEST_TMP.pcap" 2>/dev/null | tr -d '\r ' || echo 0)
+[[ "$QUEST_PCAP_BYTES" =~ ^[0-9]+$ && "$QUEST_PCAP_BYTES" -ge 24 ]] || fail "Quest PCAP header was not created"
+[[ -s "$OUT/host.pcap" ]] || fail "host PCAP header was not created"
+
 echo "Helix blackout capture"
 echo "  tooling:   ${TOOL_COMMIT:0:12}"
 echo "  runtime:   source-equivalent to ${RUNTIME_BASE:0:12}"
 echo "  host:      $HOST_IP via $HOST_IF"
 echo "  Quest:     $QUEST_IP via $QUEST_IF"
-echo "  filter:    $FILTER"
-echo "  buffer:    ${CAPTURE_BUFFER_KIB} KiB"
+echo "  Wi-Fi:     ${QUEST_FREQ_BEFORE} MHz / $QUEST_BSSID_BEFORE"
+echo "  scope:     host capture -> Quest wlan capture"
 echo "  output:    $OUT"
 echo
-echo "CAPTURE ARMED. Reproduce the avatar load/unload blackout now."
-echo "When finished, come back here and press Enter once."
+echo "CAPTURE ARMED. No ADB session remains attached during the workload."
+echo "Reproduce the avatar load/unload blackout now. When finished, press Enter once."
 read -r _
 
 CAPTURE_END_EPOCH_NS=$(date +%s%N)
 echo "capture_end_epoch_ns=$CAPTURE_END_EPOCH_NS" >>"$OUT/metadata.txt"
+
 snapshot_host after
 snapshot_quest after
+
+WIFI_STATUS_AFTER=$(cat "$OUT/quest-wifi-status-after.txt" 2>/dev/null || true)
+QUEST_FREQ_AFTER=$(wifi_frequency_mhz <<<"$WIFI_STATUS_AFTER")
+QUEST_BSSID_AFTER=$(wifi_bssid <<<"$WIFI_STATUS_AFTER")
+WIFI_STABLE=true
+if [[ ! "$QUEST_FREQ_AFTER" =~ ^[0-9]+$ ]] || (( QUEST_FREQ_AFTER < 5925 || QUEST_FREQ_AFTER > 7125 )); then
+    WIFI_STABLE=false
+fi
+if [[ -z "$QUEST_BSSID_AFTER" || "$QUEST_BSSID_AFTER" != "$QUEST_BSSID_BEFORE" ]]; then
+    WIFI_STABLE=false
+fi
+{
+    echo "quest_bssid_after=$QUEST_BSSID_AFTER"
+    echo "quest_frequency_mhz_after=$QUEST_FREQ_AFTER"
+    echo "wifi_path_stable=$WIFI_STABLE"
+} >>"$OUT/metadata.txt"
+
 cleanup_capture
 
 adb pull "$QUEST_TMP.pcap" "$OUT/quest.pcap" >/dev/null || fail "failed to pull Quest PCAP"
-adb pull "$QUEST_TMP.logcat" "$OUT/quest-logcat.txt" >/dev/null || fail "failed to pull Quest logcat"
 adb shell su -c "cat $QUEST_TMP.tcpdump.err 2>/dev/null" >"$OUT/quest-tcpdump.txt" 2>&1 || true
-adb shell su -c "cat $QUEST_TMP.logcat.err 2>/dev/null" >"$OUT/quest-logcat-stderr.txt" 2>&1 || true
+adb shell su -c 'logcat -b all -d -v threadtime 2>/dev/null || logcat -d -v threadtime' >"$OUT/quest-logcat.txt" 2>&1 || true
+adb shell su -c "rm -f $QUEST_TMP.pcap $QUEST_TMP.tcpdump.pid $QUEST_TMP.tcpdump.err" >/dev/null 2>&1 || true
 
 [[ -s "$OUT/host.pcap" ]] || fail "host PCAP is empty after the run"
 [[ -s "$OUT/quest.pcap" ]] || fail "Quest PCAP is empty after the run"
@@ -224,7 +327,8 @@ SERVER_LOG_DIR="$HOME/.local/state/wivrn/wivrn-dashboard"
 SERVER_LOG=""
 if [[ -d "$SERVER_LOG_DIR" ]]; then
     START_SEC=$((CAPTURE_START_EPOCH_NS / 1000000000))
-    SERVER_LOG=$(find "$SERVER_LOG_DIR" -maxdepth 1 -type f -name 'server_logs_*.txt' -newermt "@$START_SEC" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)
+    SERVER_LOG=$(find "$SERVER_LOG_DIR" -maxdepth 1 -type f -name 'server_logs_*.txt' -newermt "@$START_SEC" -printf '%T@ %p\n' 2>/dev/null \
+        | sort -nr | head -n1 | cut -d' ' -f2-)
 fi
 [[ -n "$SERVER_LOG" ]] || fail "no dashboard server log updated during this capture"
 cp "$SERVER_LOG" "$OUT/server-log.txt"

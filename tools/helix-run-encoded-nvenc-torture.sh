@@ -10,7 +10,7 @@ mkdir -p "$OUT"
 
 fail(){ echo "FAIL: $*" >&2; echo "evidence=$OUT" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || fail "missing command $1"; }
-for c in adb awk find grep head ip mkdir pgrep pkill python3 readlink realpath sed seq sha256sum sleep sort systemctl tail timeout tr; do need "$c"; done
+for c in adb awk cp dirname find grep head ip mkdir pgrep pkill python3 readlink realpath sed seq sha256sum sleep sort systemctl tail timeout tr; do need "$c"; done
 
 mapfile -t metas < <(grep -l "^source_commit=${SOURCE_COMMIT}$" "$HOME"/helix-encoded-nvenc-build-*/resume-metadata.txt 2>/dev/null | sort)
 [[ ${#metas[@]} -gt 0 ]] || fail "no salvaged encoded artifact set for $SOURCE_COMMIT"
@@ -132,8 +132,20 @@ grep -Fq 'HELIX_HEADLESS_DONE frames=220' "$OUT/headless.txt" || fail "headless 
 sleep 3
 adb -s "$SERIAL" shell am force-stop "$PACKAGE" >/dev/null 2>&1 || true
 sleep 1
-kill "$DASH_PID" >/dev/null 2>&1 || true; wait "$DASH_PID" >/dev/null 2>&1 || true; DASH_PID=""
-kill "$LOGCAT_PID" >/dev/null 2>&1 || true; wait "$LOGCAT_PID" >/dev/null 2>&1 || true; LOGCAT_PID=""
+kill "$DASH_PID" >/dev/null 2>&1 || true
+wait "$DASH_PID" >/dev/null 2>&1 || true
+DASH_PID=""
+# Encoder summaries are destructor-time telemetry; explicitly stop and drain the server.
+pkill -TERM -x wivrn-server >/dev/null 2>&1 || true
+for _ in $(seq 1 50); do
+  pgrep -x wivrn-server >/dev/null 2>&1 || break
+  sleep .1
+done
+pgrep -x wivrn-server >/dev/null 2>&1 && fail "wivrn-server did not terminate for summary flush"
+sleep .5
+kill "$LOGCAT_PID" >/dev/null 2>&1 || true
+wait "$LOGCAT_PID" >/dev/null 2>&1 || true
+LOGCAT_PID=""
 cp "$SERVER_LOG" "$OUT/server-log.txt"
 
 echo '[5/8] Verifying exact runtime identity and NVENC capability'

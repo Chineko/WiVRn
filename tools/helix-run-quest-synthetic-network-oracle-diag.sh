@@ -69,7 +69,7 @@ once(old,new,'oracle diagnostic print')
 
 once("echo 'verdict=QUEST_SYNTHETIC_NETWORK_PASS'\n", "echo 'verdict=QUEST_SYNTHETIC_NETWORK_DIAGNOSTIC_PASS'\n", 'diagnostic verdict')
 
-required=[diag_source,diag_branch,diag_server,diag_sha,'NETWORK_DIAGNOSTIC_ONLY=1','HELIX_SYNTHETIC_TRANSPORT_ORACLE_DETAIL']
+required=[diag_source,diag_branch,diag_server,diag_sha,'NETWORK_DIAGNOSTIC_ONLY=1','ORACLE_DETAIL|ORACLE_SANITY|EXIT|RESULT']
 for x in required:
     if x not in s:
         raise SystemExit('FAIL: diagnostic launcher requirement missing: '+x)
@@ -80,7 +80,7 @@ bash -n "$tmp"
 grep -Fq "$DIAG_SOURCE_COMMIT" "$tmp" || fail "diagnostic source binding missing"
 grep -Fq "$DIAG_SERVER_SHA256" "$tmp" || fail "diagnostic server hash binding missing"
 grep -Fq 'NETWORK_DIAGNOSTIC_ONLY=1 not-a-promotion-artifact' "$tmp" || fail "diagnostic-only marker missing"
-grep -Fq 'HELIX_SYNTHETIC_TRANSPORT_ORACLE_DETAIL' "$tmp" || fail "oracle detail output missing"
+grep -Fq 'ORACLE_DETAIL|ORACLE_SANITY|EXIT|RESULT' "$tmp" || fail "oracle diagnostic runtime grep missing"
 ! grep -Fq 'verdict=QUEST_SYNTHETIC_NETWORK_PASS' "$tmp" || fail "production PASS verdict leaked into diagnostic launcher"
 
 echo 'DIAGNOSTIC_RUNTIME_BINDING=PASS exact-source-server-hash plus-proven-apk'

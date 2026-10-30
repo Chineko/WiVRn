@@ -10,6 +10,8 @@ APK="$BUILD_ROOT/helix-encoded-nvenc-fix-v3-951ce95cd2ea.apk"
 SERVER_SHA256="1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af"
 APK_SHA256="1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c"
 ARTIFACT_GATE="artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source"
+PACKAGE="org.meumeu.wivrn.local"
+ACTIVITY="org.meumeu.wivrn.MainActivity"
 TIMEOUT_SECONDS=240
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
@@ -43,75 +45,69 @@ adb get-state >/dev/null 2>&1 || fail "Quest not visible to adb"
 serial="$(adb get-serialno | tr -d '\r')"
 [[ -n "$serial" && "$serial" != unknown ]] || fail "ADB serial unavailable"
 
-# ADB is allowed only for install/launch/evidence. Reject any explicit USB tunnel.
 forward_out="$(adb forward --list 2>/dev/null || true)"
 reverse_out="$(adb reverse --list 2>/dev/null || true)"
 [[ -z "$forward_out" ]] || fail "ADB forward exists; refusing ambiguous transport path: $forward_out"
 [[ -z "$reverse_out" ]] || fail "ADB reverse exists; refusing ambiguous transport path: $reverse_out"
 
-quest_ip="$(adb shell ip -4 addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -1 | tr -d '\r')"
+quest_ip="$(adb shell ip -4 addr show wlan0 2>/dev/null | awk '/inet / && !found {sub(/\/.*/,"",$2); value=$2; found=1} END {if(found) print value}' | tr -d '\r')"
 [[ -n "$quest_ip" ]] || fail "Quest wlan0 IPv4 address unavailable"
-route="$(ip route get "$quest_ip" 2>/dev/null | head -1)"
+route="$(ip -4 route get "$quest_ip" 2>/dev/null | head -1)"
 [[ -n "$route" ]] || fail "host has no route to Quest wlan0 address $quest_ip"
 echo "$route" | grep -Eq ' dev (lo|usb[^ ]*|rndis[^ ]*|adb[^ ]*) ' && fail "route to Quest is not accepted network path: $route"
-echo "NETWORK_PATH_GATE=PASS quest_wlan0=$quest_ip host_route=$route adb_forward=none adb_reverse=none"
+host_ip="$(printf '%s\n' "$route" | awk '{for(i=1;i<=NF;i++) if($i=="src" && !found){value=$(i+1); found=1}} END {if(found) print value}')"
+[[ -n "$host_ip" ]] || fail "host route source missing"
+echo "NETWORK_PATH_GATE=PASS quest_wlan0=$quest_ip host_route=$route host_ip=$host_ip adb_forward=none adb_reverse=none"
 
 echo "Installing exact Quest APK version=$VERSION_NAME"
-adb install -r "$APK" >/dev/null || fail "APK install failed"
-
-# Cryptographically identify the installed WiVRn package by hashing Android's installed base.apk.
-package=""
-installed_apk_path=""
-while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    path_line="$(adb shell pm path "$candidate" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | head -1)"
-    [[ -n "$path_line" ]] || continue
-    got_sha="$(adb exec-out cat "$path_line" 2>/dev/null | sha256sum | awk '{print $1}')"
-    if [[ "$got_sha" == "$APK_SHA256" ]]; then
-        if [[ -n "$package" && "$package" != "$candidate" ]]; then
-            fail "multiple installed WiVRn packages match pinned APK hash: $package $candidate"
-        fi
-        package="$candidate"
-        installed_apk_path="$path_line"
-    fi
-done < <(adb shell pm list packages 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | grep '^org\.meumeu\.wivrn')
-[[ -n "$package" ]] || fail "installed WiVRn package matching pinned APK SHA256 not found"
-installed_version="$(adb shell dumpsys package "$package" 2>/dev/null | sed -n 's/^[[:space:]]*versionName=//p' | head -1 | tr -d '\r')"
-echo "Quest package=$package installed_apk=$installed_apk_path version=${installed_version:-unknown} hash=$APK_SHA256"
+adb -s "$serial" install -r -d "$APK" >/dev/null || fail "APK install failed"
+package_dump="$(adb -s "$serial" shell dumpsys package "$PACKAGE" 2>/dev/null | tr -d '\r')"
+printf '%s\n' "$package_dump" | grep -Fq "versionName=$VERSION_NAME" || fail "installed versionName mismatch for proven package $PACKAGE"
+echo "Quest package=$PACKAGE version=$VERSION_NAME"
 
 evidence="$HOME/helix-synthetic-network-runtime-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$evidence"
-printf 'source_commit=%s\nserver_sha256=%s\napk_sha256=%s\npackage=%s\nversion=%s\ninstalled_apk=%s\nquest_wlan0=%s\nhost_route=%s\n' \
-    "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$package" "${installed_version:-unknown}" "$installed_apk_path" "$quest_ip" "$route" >"$evidence/metadata.txt"
+printf '%s\n' "$package_dump" >"$evidence/package.txt"
+printf 'source_commit=%s\nserver_sha256=%s\napk_sha256=%s\npackage=%s\nversion=%s\nquest_wlan0=%s\nhost_ip=%s\nhost_route=%s\n' \
+    "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$PACKAGE" "$VERSION_NAME" "$quest_ip" "$host_ip" "$route" >"$evidence/metadata.txt"
 
 service_was_active=0
 systemctl --user is-active --quiet wivrn.service && service_was_active=1 || true
 cleanup(){
     set +e
     [[ -n "${server_pid:-}" ]] && kill "$server_pid" 2>/dev/null
-    adb shell am force-stop "$package" >/dev/null 2>&1
+    adb -s "$serial" shell am force-stop "$PACKAGE" >/dev/null 2>&1
     if (( service_was_active )); then
         systemctl --user start wivrn.service >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT INT TERM
 
-# Avoid a competing user service/server, restoring it on exit if it was active.
 systemctl --user stop wivrn.service >/dev/null 2>&1 || true
 pkill -x wivrn-server >/dev/null 2>&1 || true
 sleep 1
 
-adb logcat -c >/dev/null 2>&1 || true
-adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-adb shell am force-stop "$package" >/dev/null 2>&1 || true
+adb -s "$serial" logcat -c >/dev/null 2>&1 || true
+adb -s "$serial" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+adb -s "$serial" shell am force-stop "$PACKAGE" >/dev/null 2>&1 || true
 
-stdbuf -oL -eL "$SERVER" --helix-synthetic-transport --no-fork >"$evidence/server-log.txt" 2>&1 &
+stdbuf -oL -eL "$SERVER" --helix-synthetic-transport --no-fork --no-publish-service >"$evidence/server-log.txt" 2>&1 &
 server_pid=$!
 sleep 2
 kill -0 "$server_pid" 2>/dev/null || { cat "$evidence/server-log.txt" >&2; fail "server exited before Quest launch"; }
 
-# Launch only; media/feedback must use the production Wi-Fi socket proven above.
-adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || fail "Quest app launch failed"
+# Explicit LAN URI: ADB launches the activity only; WiVRn TCP/UDP traffic goes to host_ip.
+adb -s "$serial" shell am start -W -a android.intent.action.VIEW -d "wivrn+tcp://${host_ip}" -n "$PACKAGE/$ACTIVITY" >"$evidence/launch.txt" 2>&1 || fail "Quest launch failed"
+
+connected=0
+for _ in $(seq 1 200); do
+    kill -0 "$server_pid" 2>/dev/null || fail "server exited before trusted Quest connection"
+    grep -Fq 'To pair a new headset use PIN code:' "$evidence/server-log.txt" && fail "server entered pairing mode; existing trust state was not visible"
+    if grep -Fq 'Client connected' "$evidence/server-log.txt"; then connected=1; break; fi
+    sleep .1
+done
+[[ "$connected" -eq 1 ]] || fail "Quest did not establish trusted LAN connection"
+echo 'NETWORK_TRUSTED_CONNECTION=PASS explicit-wivrn-tcp-uri'
 
 set +e
 timeout "$TIMEOUT_SECONDS" bash -c '
@@ -125,10 +121,9 @@ timeout "$TIMEOUT_SECONDS" bash -c '
 wait_status=$?
 set -e
 
-adb logcat -d >"$evidence/logcat.txt" 2>/dev/null || true
+adb -s "$serial" logcat -d >"$evidence/logcat.txt" 2>/dev/null || true
 [[ $wait_status -eq 0 ]] || { tail -200 "$evidence/server-log.txt" >&2; fail "synthetic network battery timed out/exited without completion"; }
 
-grep -Fq 'Client connected' "$evidence/server-log.txt" || fail "trusted Quest connection not observed"
 grep -Fq 'HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=1' "$evidence/server-log.txt" || fail "oracle sanity did not pass"
 result_line="$(grep 'HELIX_SYNTHETIC_TRANSPORT_RESULT' "$evidence/server-log.txt" | tail -1 || true)"
 [[ -n "$result_line" ]] || fail "result line missing"

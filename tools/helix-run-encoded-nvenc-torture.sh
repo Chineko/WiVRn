@@ -10,7 +10,7 @@ mkdir -p "$OUT"
 
 fail(){ echo "FAIL: $*" >&2; echo "evidence=$OUT" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || fail "missing command $1"; }
-for c in adb awk grep sed sort tail head sha256sum timeout pgrep pkill readlink realpath systemctl python3; do need "$c"; done
+for c in adb awk find grep head ip mkdir pgrep pkill python3 readlink realpath sed seq sha256sum sleep sort systemctl tail timeout tr; do need "$c"; done
 
 mapfile -t metas < <(grep -l "^source_commit=${SOURCE_COMMIT}$" "$HOME"/helix-encoded-nvenc-build-*/resume-metadata.txt 2>/dev/null | sort)
 [[ ${#metas[@]} -gt 0 ]] || fail "no salvaged encoded artifact set for $SOURCE_COMMIT"
@@ -25,7 +25,6 @@ for f in "$SERVER" "$DASHBOARD" "$MANIFEST" "$APK" "$DRIVER"; do [[ -s "$f" ]] |
 grep -Fq 'provenance=PASS direct-executable-build-graph' "$META" || fail "desktop provenance marker missing"
 grep -Fq 'artifact_gate=PASS salvaged-existing-desktop-plus-apk-headless' "$META" || fail "artifact gate marker missing"
 
-# Prefer exactly one USB ADB device; reject ambiguity.
 mapfile -t devs < <(adb devices | awk 'NR>1 && $2=="device" {print $1}')
 mapfile -t usb < <(printf '%s\n' "${devs[@]}" | grep -v ':' || true)
 if [[ ${#usb[@]} -eq 1 ]]; then SERIAL="${usb[0]}"; elif [[ ${#devs[@]} -eq 1 ]]; then SERIAL="${devs[0]}"; else fail "expected one usable ADB device"; fi
@@ -130,7 +129,6 @@ echo "driver_status=$DRIVER_STATUS" >>"$OUT/metadata.txt"
 [[ "$DRIVER_STATUS" -eq 0 ]] || fail "headless OpenXR driver failed"
 grep -Fq 'HELIX_HEADLESS_DONE frames=220' "$OUT/headless.txt" || fail "headless driver did not complete 220 frames"
 
-# Let final feedback and encoder summaries drain.
 sleep 3
 adb -s "$SERIAL" shell am force-stop "$PACKAGE" >/dev/null 2>&1 || true
 sleep 1
@@ -144,17 +142,15 @@ grep -Fq 'HELIX_ENCODED_NVENC_CAP stream=0 supported=1' "$OUT/server-log.txt" ||
 grep -Fq 'HELIX_ENCODED_NVENC_CAP stream=1 supported=1' "$OUT/server-log.txt" || fail "control stream NVENC capability was not active"
 
 echo '[6/8] Reducing encoded recovery semantics'
+set +e
 python3 - "$OUT/server-log.txt" "$OUT/quest-logcat.txt" "$OUT/result.txt" <<'PY'
 import re,sys
 from pathlib import Path
 s=Path(sys.argv[1]).read_text(errors='replace')
 q=Path(sys.argv[2]).read_text(errors='replace')
 out=Path(sys.argv[3])
-
 def lines(tag): return [x for x in s.splitlines() if tag in x]
-
-def parse_kv(line):
-    return {k:v for k,v in re.findall(r'([A-Za-z_]+)=([^\s]+)',line)}
+def parse_kv(line): return {k:v for k,v in re.findall(r'([A-Za-z_]+)=([^\s]+)',line)}
 inj={parse_kv(x).get('scenario'):parse_kv(x) for x in lines('HELIX_ENCODED_INJECT scenario=')}
 done={parse_kv(x).get('scenario'):parse_kv(x) for x in lines('HELIX_ENCODED_INJECT_DONE')}
 fb={parse_kv(x).get('scenario'):parse_kv(x) for x in lines('HELIX_ENCODED_FEEDBACK')}
@@ -194,15 +190,12 @@ else:
 crash=bool(re.search(r'Fatal signal|SIGABRT|Assertion.*failed|FATAL EXCEPTION|ANR in org\.meumeu\.wivrn',q,re.I))
 if crash: errors.append('quest_crash_marker')
 verdict='PASS' if not errors else 'FAIL'
-text='\n'.join([
- f'verdict={verdict}',
- f'injections={len(inj)} feedback={len(fb)} recoveries={len(rec)} invalidations={len(inv)}',
- 'errors=' + (','.join(errors) if errors else 'none'),
-])+'\n'
+text='\n'.join([f'verdict={verdict}',f'injections={len(inj)} feedback={len(fb)} recoveries={len(rec)} invalidations={len(inv)}','errors=' + (','.join(errors) if errors else 'none')])+'\n'
 out.write_text(text); print(text,end='')
 raise SystemExit(0 if verdict=='PASS' else 1)
 PY
 REDUCE_STATUS=$?
+set -e
 
 echo '[7/8] Final encoded NVENC verdict'
 cat "$OUT/result.txt"

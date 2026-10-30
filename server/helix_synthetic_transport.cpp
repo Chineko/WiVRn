@@ -491,6 +491,8 @@ int run(wivrn_connection & connection, std::stop_token stop_token)
 {
 	const bool oracle_ok = oracle_self_test();
 	U_LOG_I("HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d", oracle_ok);
+	std::fprintf(stderr, "HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d\n", oracle_ok);
+	std::fflush(stderr);
 	if (!oracle_ok)
 		return 2;
 

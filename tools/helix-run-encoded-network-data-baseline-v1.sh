@@ -12,7 +12,7 @@ RUNNER="$OUT/frozen-runner.sh"
 mkdir -p "$OUT/runs"
 
 fail(){ echo "FAIL: $*" >&2; echo "batch_evidence=$OUT" >&2; exit 2; }
-for c in git bash python3 awk grep sed tee date sleep mkdir cp sha256sum; do
+for c in git bash python3 awk grep sed tee date sleep mkdir cp sha256sum chmod tail; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || fail "HELIX_RUNS must be a positive integer"
@@ -35,9 +35,6 @@ position_label=$POSITION_LABEL
 started_at=$(date --iso-8601=seconds)
 EOF
 
-# Full strict audit once, with no runtime. Every real trial below reruns the same
-# runner's own gates, but this prevents entering the batch if the frozen
-# instrument/artifact/LAN composition is not currently valid.
 echo '[audit] Frozen encoded-network measurement instrument'
 HELIX_PRECHECK_ONLY=1 bash "$RUNNER" | tee "$OUT/precheck.log"
 grep -Fq 'ENCODED_NETWORK_AUDIT_A=PASS' "$OUT/precheck.log" || fail "Audit A precheck missing"

@@ -6,6 +6,7 @@ import sys
 EXPECTED = {
     "server/main.cpp": "af2f457d5c7399430105e39ad5175cfd6d8bf8c0",
     "server/CMakeLists.txt": "dcfc2117e95c7b69191b9b4afcf4507f845f25b8",
+    "server/helix_synthetic_transport.cpp": "4e833ed349e6ad78e7409da9a866002e30e4ab00",
 }
 
 
@@ -86,6 +87,14 @@ def main() -> int:
         path,
     )
 
+    path = "server/helix_synthetic_transport.cpp"
+    updated[path] = replace_once(
+        updated[path],
+        '''\t// Warm-up establishes independent receiver packet-sequence state for both color streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\tif (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))\n\t\t\t++s.catastrophic;\n\t\tframe[stream] += 2;\n\t}\n\n\tfor (const auto & event: recorded_events)''',
+        '''\t// Warm-up establishes independent receiver packet-sequence state for both color streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\tif (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))\n\t\t\t++s.catastrophic;\n\t\tframe[stream] += 2;\n\t}\n\n\t// Dominant historical failure class: the entire encoded frame disappears before\n\t// Quest wlan0. Exercise a literal 64/64-shard erasure on both production streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\trun_case(tx, connection, s, stream, frame[stream], shards_per_frame, 0, false);\n\t\tframe[stream] += 2;\n\t}\n\n\tfor (const auto & event: recorded_events)''',
+        path,
+    )
+
     for path, text in updated.items():
         Path(path).write_text(text)
 
@@ -102,6 +111,11 @@ def main() -> int:
                 "HELIX_SYNTHETIC_TRANSPORT_EXIT",
                 "helix_synthetic_thread->request_stop()",
                 "helix_synthetic_result.store",
+            ),
+            "server/helix_synthetic_transport.cpp": (
+                "HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY",
+                "shards_per_frame, 0, false",
+                "recorded_events",
             ),
         }
         for marker_path, required in markers.items():

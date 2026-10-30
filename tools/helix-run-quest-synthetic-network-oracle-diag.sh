@@ -3,11 +3,11 @@ set -euo pipefail
 
 BASE_LAUNCHER_COMMIT="636de16b06f445ee7e1f0f8dd611802389f80485"
 BASE_LAUNCHER_PATH="tools/helix-run-quest-synthetic-network-v3.sh"
-DIAG_SOURCE_COMMIT="9f3149737c4478ef397fac1fbd8e2e43880e8273"
+DIAG_SOURCE_COMMIT="2022843f829ac6aff8af4741557c9b35d0651dce"
 DIAG_SOURCE_BRANCH="helix-synthetic-network-oracle-diag"
-DIAG_BUILD_ROOT="$HOME/helix-synthetic-oracle-diag-build-20261030-193615"
-DIAG_SERVER="$DIAG_BUILD_ROOT/worktree/build-server/server/wivrn-server"
-DIAG_SERVER_SHA256="cf8e81b0cd8b2b7ec793eb10280680f75864653408fc3400af326884eef8602c4"
+DIAG_BUILD_ROOT="$HOME/helix-synthetic-oracle-diag-build-20261030-194105"
+DIAG_SERVER="$DIAG_BUILD_ROOT/wivrn-server"
+DIAG_SERVER_SHA256="7f2951dfeca6703227b25f847fe39af6a3d24a30063ee59cd39da88ee34b9232"
 BASE_SOURCE_COMMIT="951ce95cd2ea14bf34e099d2b7e56f272d05cdac"
 BASE_SERVER_SHA256="1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af"
 
@@ -44,7 +44,6 @@ once('SOURCE_BRANCH="helix-encoded-nvenc-torture-fix-v3-built"', f'SOURCE_BRANCH
 once('SERVER="$BUILD_ROOT/worktree/build-everything/server/wivrn-server"', f'SERVER={diag_server!r}', 'server path')
 once(f'SERVER_SHA256="{base_sha}"', f'SERVER_SHA256="{diag_sha}"', 'server hash')
 
-# Diagnostic server intentionally does not match the base v3 metadata source/server identity.
 for old in [
     'grep -Fqx "source_commit=$SOURCE_COMMIT" "$META" || fail "metadata source mismatch"\n',
     'grep -Fqx "remote_head=$SOURCE_COMMIT" "$META" || fail "metadata remote-head mismatch"\n',
@@ -61,7 +60,6 @@ new=(
 )
 once(old,new,'preflight label')
 
-# Preserve production result parsing, but always print oracle diagnostics before any failure.
 old="grep -Fq 'HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=1' \"$evidence/server-log.txt\" || fail \"oracle sanity did not pass\"\n"
 new=(
     "grep -E 'HELIX_SYNTHETIC_TRANSPORT_(ORACLE_DETAIL|ORACLE_SANITY|EXIT|RESULT)' \"$evidence/server-log.txt\" || true\n"
@@ -69,7 +67,6 @@ new=(
 )
 once(old,new,'oracle diagnostic print')
 
-# A diagnostic run must never claim the production promotion verdict.
 once("echo 'verdict=QUEST_SYNTHETIC_NETWORK_PASS'\n", "echo 'verdict=QUEST_SYNTHETIC_NETWORK_DIAGNOSTIC_PASS'\n", 'diagnostic verdict')
 
 required=[diag_source,diag_branch,diag_server,diag_sha,'NETWORK_DIAGNOSTIC_ONLY=1','HELIX_SYNTHETIC_TRANSPORT_ORACLE_DETAIL']

@@ -7,7 +7,7 @@ META="$BUILD_ROOT/resume-metadata.txt"
 OUT="$BUILD_ROOT"
 
 fail(){ echo "error: $*" >&2; exit 2; }
-for c in c++ find grep dirname realpath; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
+for c in awk c++ dirname find grep ldconfig realpath sed tail; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
 [[ -s "$META" ]] || fail "missing encoded artifact metadata: $META"
 grep -Fq "source_commit=$SOURCE_COMMIT" "$META" || fail "artifact metadata source commit mismatch"
 grep -Fq 'provenance=PASS direct-executable-build-graph' "$META" || fail "desktop provenance marker missing"
@@ -42,22 +42,9 @@ cat >"$SRC" <<'CPP'
     std::fflush(stderr);
     std::exit(2);
 }
-
-static void xr_ok(XrResult r, const char * what)
-{
-    if (XR_FAILED(r)) die(what, r);
-}
-static void vk_ok(VkResult r, const char * what)
-{
-    if (r != VK_SUCCESS) die(what, XR_SUCCESS, r);
-}
-
-template <typename T>
-static void xr_init(T & v, XrStructureType type)
-{
-    v = {};
-    v.type = type;
-}
+static void xr_ok(XrResult r, const char * what) { if (XR_FAILED(r)) die(what, r); }
+static void vk_ok(VkResult r, const char * what) { if (r != VK_SUCCESS) die(what, XR_SUCCESS, r); }
+template <typename T> static void xr_init(T & v, XrStructureType type) { v = {}; v.type = type; }
 
 int main(int argc, char ** argv)
 {
@@ -109,6 +96,13 @@ int main(int argc, char ** argv)
 
     XrGraphicsRequirementsVulkan2KHR req{}; xr_init(req, XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR);
     xr_ok(get_vk_req(instance, system, &req), "xrGetVulkanGraphicsRequirements2KHR");
+    auto xr_version_to_vk = [](XrVersion v) {
+        return VK_MAKE_VERSION(uint32_t(XR_VERSION_MAJOR(v)), uint32_t(XR_VERSION_MINOR(v)), uint32_t(XR_VERSION_PATCH(v)));
+    };
+    const uint32_t min_vk_api = xr_version_to_vk(req.minApiVersionSupported);
+    const uint32_t max_vk_api = xr_version_to_vk(req.maxApiVersionSupported);
+    uint32_t chosen_vk_api = std::min<uint32_t>(VK_API_VERSION_1_2, max_vk_api);
+    if (chosen_vk_api < min_vk_api) chosen_vk_api = min_vk_api;
 
     VkApplicationInfo vai{};
     vai.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -116,8 +110,7 @@ int main(int argc, char ** argv)
     vai.applicationVersion = 1;
     vai.pEngineName = "Helix";
     vai.engineVersion = 1;
-    vai.apiVersion = std::min<uint32_t>(VK_API_VERSION_1_2, req.maxApiVersionSupported);
-    if (vai.apiVersion < req.minApiVersionSupported) vai.apiVersion = req.minApiVersionSupported;
+    vai.apiVersion = chosen_vk_api;
     VkInstanceCreateInfo vici{};
     vici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     vici.pApplicationInfo = &vai;
@@ -374,10 +367,13 @@ for root in /usr/include "$WORKTREE/build-everything" "$WORKTREE"; do
 done
 [[ -n "$hdr" ]] || fail "OpenXR platform headers not found"
 inc="$(dirname "$(dirname "$hdr")")"
-[[ -f /usr/include/vulkan/vulkan.h || -f "$WORKTREE"/build-everything/_deps/*/include/vulkan/vulkan.h ]] || true
+OPENXR_LIB="$(ldconfig -p | awk '/libopenxr_loader\.so\.1/{print $NF; exit}')"
+VULKAN_LIB="$(ldconfig -p | awk '/libvulkan\.so\.1/{print $NF; exit}')"
+[[ -n "$OPENXR_LIB" && -f "$OPENXR_LIB" ]] || fail "runtime OpenXR loader library not found"
+[[ -n "$VULKAN_LIB" && -f "$VULKAN_LIB" ]] || fail "runtime Vulkan loader library not found"
 
 echo '[1/3] Compiling graphics-bound Vulkan/OpenXR stimulus'
-c++ -std=c++20 -O2 -Wall -Wextra -Werror -I"$inc" "$SRC" -lopenxr_loader -lvulkan -pthread -o "$BIN"
+c++ -std=c++20 -O2 -Wall -Wextra -Werror -I"$inc" "$SRC" "$OPENXR_LIB" "$VULKAN_LIB" -pthread -o "$BIN"
 [[ -x "$BIN" ]] || fail "Vulkan stimulus build failed"
 
 echo '[2/3] Static stimulus contract audit'
@@ -392,6 +388,8 @@ source_commit=$SOURCE_COMMIT
 server=$SERVER
 openxr_manifest=$MANIFEST
 apk=$APK
+openxr_loader=$OPENXR_LIB
+vulkan_loader=$VULKAN_LIB
 vulkan_stimulus=$BIN
 stimulus_contract=PASS graphics-bound-vulkan-projection-layer
 server_artifact_gate=PASS reused-frozen-encoded-artifacts

@@ -120,6 +120,7 @@ wait "${logcat_pid}" >/dev/null 2>&1 || true
 logcat_pid=""
 
 echo "[6/7] Reducing fixed 95/5 promotion gate"
+set +e
 python3 - "$server_status" "${out}/server.log" "${out}/quest-logcat.txt" "${out}/result.txt" <<'PY'
 import re, sys
 from pathlib import Path
@@ -193,6 +194,7 @@ print(out.read_text(), end='')
 raise SystemExit(0 if passed else 1)
 PY
 reduce_status=$?
+set -e
 
 echo "[7/7] Final verdict"
 if (( reduce_status == 0 )); then

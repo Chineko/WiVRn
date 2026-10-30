@@ -40,11 +40,32 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1]); seal,src_sha,bin_sha,meta_sha=sys.argv[2:]
 s=p.read_text()
+
+# Require the actual 8-pattern entropy stimulus to execute and bind its seal into evidence.
 needle='''grep -Fq 'HELIX_VULKAN_DONE frames=220' "$OUT/vulkan.txt" || fail "Vulkan stimulus did not complete 220 frames"\n'''
 replacement=needle + '''grep -Fq 'HELIX_VULKAN_ENTROPY patterns=8' "$OUT/vulkan.txt" || fail "Vulkan entropy stimulus contract did not execute"\nprintf 'stimulus_seal=%s\\nstimulus_source_sha256=%s\\nstimulus_binary_sha256=%s\\nstimulus_metadata_sha256=%s\\n' ''' + repr(seal) + ''' ''' + repr(src_sha) + ''' ''' + repr(bin_sha) + ''' ''' + repr(meta_sha) + ''' >>"$OUT/metadata.txt"\n'''
 if needle not in s:
     raise SystemExit('error: Vulkan completion anchor not found')
 s=s.replace(needle,replacement,1)
+
+# Close remaining set -o pipefail + early-exit awk paths in network address discovery.
+old_q='''QUEST_IP="$(adb -s "$SERIAL" shell ip -4 addr show wlan0 | tr -d '\\r' | awk '/inet /{sub(/\\/.*/,"",$2); print $2; exit}')"\n'''
+new_q='''QUEST_IP="$(adb -s "$SERIAL" shell ip -4 addr show wlan0 | tr -d '\\r' | awk '/inet / && !found {sub(/\\/.*/,"",$2); value=$2; found=1} END {if(found) print value}')"\n'''
+old_h='''HOST_IP="$(ip -4 route get "$QUEST_IP" | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"\n'''
+new_h='''HOST_IP="$(ip -4 route get "$QUEST_IP" | awk '{for(i=1;i<=NF;i++) if($i=="src" && !found){value=$(i+1); found=1}} END {if(found) print value}')"\n'''
+if old_q not in s or old_h not in s:
+    raise SystemExit('error: address-discovery anchors not found')
+s=s.replace(old_q,new_q,1).replace(old_h,new_h,1)
+
+# Reducer invalidation evidence must match both stream 0 and the exact failed frame.
+old_apply="if not any(x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')"
+new_apply="if not any(x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')"
+old_unexpected="if any(x.get('frame')==frame for x in inv): errors.append('rtx8:unexpected_invalidation')"
+new_unexpected="if any(x.get('stream')=='0' and x.get('frame')==frame for x in inv): errors.append('rtx8:unexpected_invalidation')"
+if old_apply not in s or old_unexpected not in s:
+    raise SystemExit('error: reducer invalidation anchors not found')
+s=s.replace(old_apply,new_apply,1).replace(old_unexpected,new_unexpected,1)
+
 for required in [
     'HELIX_VULKAN_ENTROPY patterns=8',
     'HELIX_VULKAN_DONE frames=220',
@@ -52,12 +73,19 @@ for required in [
     'HELIX_ENCODED_NVENC_CAP stream=0 supported=1',
     'HELIX_ENCODED_TORTURE_SUMMARY',
     "for c in ('rtx8','gap9','full_reference')",
+    "x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied'",
+    "awk '/inet / && !found",
 ]:
     if required not in s:
         raise SystemExit(f'error: strict runtime contract missing: {required}')
-for forbidden in ['XR_MND_headless','HELIX_HEADLESS_DONE','$OUT/headless.txt']:
+for forbidden in [
+    'XR_MND_headless','HELIX_HEADLESS_DONE','$OUT/headless.txt',
+    "awk '/inet /{sub(/\\/.*/,\"\",$2); print $2; exit}'",
+    'print $(i+1); exit',
+    "any(x.get('frame')==frame and x.get('action')=='applied' for x in inv)",
+]:
     if forbidden in s:
-        raise SystemExit(f'error: stale headless runtime contract remains: {forbidden}')
+        raise SystemExit(f'error: stale runtime contract remains: {forbidden}')
 p.write_text(s)
 PY
 
@@ -68,8 +96,10 @@ grep -Fq 'running server identity mismatch' "$tmp"
 grep -Fq 'HELIX_ENCODED_NVENC_CAP stream=0 supported=1' "$tmp"
 grep -Fq 'HELIX_ENCODED_TORTURE_SUMMARY' "$tmp"
 grep -Fq "for c in ('rtx8','gap9','full_reference')" "$tmp"
+grep -Fq "x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied'" "$tmp"
 ! grep -Fq 'XR_MND_headless' "$tmp"
 ! grep -Fq 'HELIX_HEADLESS_DONE' "$tmp"
+! grep -Fq 'print $(i+1); exit' "$tmp"
 
 echo 'STRICT_RUNTIME_PREFLIGHT=PASS sealed-artifact-and-generated-runner-audited'
 exec bash "$tmp"

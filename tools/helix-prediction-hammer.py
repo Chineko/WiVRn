@@ -205,6 +205,11 @@ def case_successful_reference(frame: int, lag: int) -> Outcome:
     m.last_submitted = frame + lag
     m.on_feedback(Feedback(frame, False))
     t = m.encode(frame + lag + 1, {frame: True})
+    watchdog = lag + 3 > 60
+    if watchdog:
+        clean = t == "I" and m.stats["applied"] == 1 and not m.pending and m.idr.kind == "wait_idr_feedback"
+        return outcome("successful_reference", clean, True, clean, m,
+                       f"frame={frame} lag={lag} type={t} reason=decoder_stale_watchdog")
     good = t == "P" and m.stats["applied"] == 1 and not m.pending and m.idr.kind == "running"
     return outcome("successful_reference", good, False, True, m, f"frame={frame} lag={lag} type={t}")
 
@@ -223,10 +228,15 @@ def case_stale(frame: int, age_frames: int) -> Outcome:
     m.last_submitted = frame + age_frames
     m.on_feedback(Feedback(frame, False))
     t = m.encode(frame + age_frames + 1)
-    expect_fallback = age_frames > RECENT_HORIZON
-    if expect_fallback:
+    if age_frames > RECENT_HORIZON:
         clean = t == "I" and m.stats["stale"] == 1 and m.stats["fallback_idr"] == 1 and not m.pending
-        return outcome("stale_boundary", clean, True, clean, m, f"age={age_frames} type={t}")
+        return outcome("stale_boundary", clean, True, clean, m,
+                       f"age={age_frames} type={t} reason=helix_stale_horizon")
+    watchdog = age_frames + 3 > 60
+    if watchdog:
+        clean = t == "I" and m.stats["applied"] == 1 and not m.pending and m.idr.kind == "wait_idr_feedback"
+        return outcome("stale_boundary", clean, True, clean, m,
+                       f"age={age_frames} type={t} reason=decoder_stale_watchdog")
     good = t == "P" and m.stats["applied"] == 1 and not m.pending
     return outcome("stale_boundary", good, False, True, m, f"age={age_frames} type={t}")
 
@@ -314,28 +324,29 @@ def case_burst_train(rng: random.Random, base: int) -> Outcome:
     m = DeferredInvalidationModel(True, last_ack=base - 2)
     m.last_submitted = base + rng.randint(0, 8)
     count = rng.randint(1, 24)
-    frames = []
-    any_forced_failure = False
-    outcomes: dict[int, bool] = {}
-    for _ in range(count):
-        frame = base + rng.randint(0, 24)
-        frames.append(frame)
-        if rng.random() < 0.08:
-            m.idr.set_non_ref(frame)
-        m.on_feedback(Feedback(frame, False))
-        if rng.random() < 0.12:
-            outcomes[frame] = False
-            any_forced_failure = True
-    t = m.encode(base + 30, outcomes)
 
+    # Reference status is an encoder-output property. Freeze it before any feedback
+    # arrives so the generator cannot create the impossible chronology where a loss
+    # is queued as a reference and only later becomes NONREF_P.
+    sequence = [base + rng.randint(0, 24) for _ in range(count)]
+    unique_frames = set(sequence)
+    nonrefs = {frame for frame in unique_frames if rng.random() < 0.08}
+    for frame in nonrefs:
+        m.idr.set_non_ref(frame)
+
+    outcomes: dict[int, bool] = {}
+    for frame in unique_frames:
+        if frame not in nonrefs and rng.random() < 0.12:
+            outcomes[frame] = False
+    for frame in sequence:
+        m.on_feedback(Feedback(frame, False))
+
+    t = m.encode(base + 30, outcomes)
     fallback_happened = m.stats["fallback_idr"] > 0
     clean = not fallback_happened or (t == "I" and not m.pending)
-    # If all queued invalidations succeeded and no overflow happened, prediction may continue.
-    # If any actual fallback happened, the next decision must be an IDR.
     good = clean and len(m.pending) == 0
-    expected = fallback_happened
-    return outcome("burst_train", good, expected, clean if expected else True, m,
-                   f"count={count} forced_failure={any_forced_failure} fallback={fallback_happened} type={t}")
+    return outcome("burst_train", good, fallback_happened, clean if fallback_happened else True, m,
+                   f"count={count} fallback={fallback_happened} type={t}")
 
 
 def build_cases(seed: int, random_cases: int, recorded_variants: int) -> list[Outcome]:

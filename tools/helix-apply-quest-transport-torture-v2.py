@@ -58,10 +58,12 @@ def main() -> int:
     Path(PATH).write_text(text)
     try:
         subprocess.run(["git", "diff", "--check", "--", PATH], check=True)
+        # Check functional source markers only. Do not gate on prose that lives in
+        # this transformer but is not emitted into the transformed C++ source.
         for marker in (
             "missing == shards_per_frame ? 0 : 1",
-            "explicit RTX-rescue scenario",
             "run_rtx_rescue_case",
+            "HELIX_TRANSPORT_TORTURE case=rtx_rescue",
         ):
             if marker not in text:
                 raise RuntimeError(f"required v2 marker missing: {marker}")

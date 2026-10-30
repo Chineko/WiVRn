@@ -1,0 +1,158 @@
+diff --git a/server/encoder/video_encoder.h b/server/encoder/video_encoder.h
+--- a/server/encoder/video_encoder.h
++++ b/server/encoder/video_encoder.h
+@@
+-	void on_feedback(const from_headset::feedback &);
++	virtual void on_feedback(const from_headset::feedback &);
+ 	void reset();
+ 
+ 	// bitrate_bps is the bitrate for the whole stream
+diff --git a/server/encoder/video_encoder_nvenc.h b/server/encoder/video_encoder_nvenc.h
+--- a/server/encoder/video_encoder_nvenc.h
++++ b/server/encoder/video_encoder_nvenc.h
+@@
+ #include "video_encoder_nvenc_shared_state.h"
+ #include <array>
++#include <atomic>
++#include <deque>
+ #include <ffnvcodec/dynlink_cuda.h>
+ #include <ffnvcodec/dynlink_loader.h>
+ #include <ffnvcodec/nvEncodeAPI.h>
++#include <mutex>
+ #include <vulkan/vulkan_raii.hpp>
+@@
+ 	float fps;
+ 	uint64_t bitrate;
+ 	int bytesPerPixel = 1;
++
++	static constexpr size_t helix_invalidation_queue_limit = 16;
++	static constexpr uint64_t helix_invalidation_recent_horizon = 256;
++	std::mutex helix_invalidation_mutex;
++	std::deque<uint64_t> helix_pending_invalidations;
++	std::atomic_uint64_t helix_last_submitted_frame{0};
++	uint64_t helix_invalidation_queued = 0;
++	uint64_t helix_invalidation_applied = 0;
++	uint64_t helix_invalidation_duplicates = 0;
++	uint64_t helix_invalidation_overflow = 0;
++	uint64_t helix_invalidation_stale = 0;
++	uint64_t helix_invalidation_errors = 0;
+ 
+ 	NV_ENC_RC_PARAMS get_rc_params(uint64_t bitrate, float framerate);
+ 	void set_init_params_fps(float framerate);
++	void helix_drain_reference_invalidations();
++	void helix_clear_reference_invalidations();
+@@
+ 	~video_encoder_nvenc();
+ 
+ 	void present_image(vk::Image y_cbcr, vk::SemaphoreSubmitInfo info, uint8_t slot, uint64_t frame_index) override;
+ 	std::optional<data> encode(uint8_t slot, uint64_t frame_index) override;
++	void on_feedback(const from_headset::feedback &) override;
+ 
+ 	static std::array<int, 2> get_max_size(video_codec);
+ };
+diff --git a/server/encoder/video_encoder_nvenc.cpp b/server/encoder/video_encoder_nvenc.cpp
+--- a/server/encoder/video_encoder_nvenc.cpp
++++ b/server/encoder/video_encoder_nvenc.cpp
+@@
+ void video_encoder_nvenc::set_init_params_fps(float framerate)
+ {
+ 	init_params.frameRateNum = framerate;
+ 	init_params.frameRateDen = 1;
+ }
++
++void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
++{
++	auto & idr_handler = static_cast<default_idr_handler &>(*idr);
++	if (!feedback.sent_to_decoder && !idr_handler.is_non_ref_frame(feedback.frame_index))
++	{
++		std::scoped_lock lock(helix_invalidation_mutex);
++		if (std::ranges::contains(helix_pending_invalidations, feedback.frame_index))
++		{
++			++helix_invalidation_duplicates;
++		}
++		else
++		{
++			if (helix_pending_invalidations.size() == helix_invalidation_queue_limit)
++			{
++				helix_pending_invalidations.pop_front();
++				++helix_invalidation_overflow;
++			}
++			helix_pending_invalidations.push_back(feedback.frame_index);
++			++helix_invalidation_queued;
++		}
++	}
++
++	video_encoder::on_feedback(feedback);
++}
++
++void video_encoder_nvenc::helix_clear_reference_invalidations()
++{
++	std::scoped_lock lock(helix_invalidation_mutex);
++	helix_pending_invalidations.clear();
++}
++
++void video_encoder_nvenc::helix_drain_reference_invalidations()
++{
++	std::deque<uint64_t> pending;
++	{
++		std::scoped_lock lock(helix_invalidation_mutex);
++		pending.swap(helix_pending_invalidations);
++	}
++
++	const uint64_t newest = helix_last_submitted_frame.load(std::memory_order_relaxed);
++	for (uint64_t frame_index: pending)
++	{
++		if (newest > frame_index && newest - frame_index > helix_invalidation_recent_horizon)
++		{
++			++helix_invalidation_stale;
++			continue;
++		}
++
++		NVENCSTATUS status = shared_state->fn.nvEncInvalidateRefFrames(session_handle, frame_index);
++		if (status == NV_ENC_SUCCESS)
++		{
++			++helix_invalidation_applied;
++			U_LOG_I("Helix NVENC invalidated reference stream=%u frame=%llu",
++			        stream_idx,
++			        static_cast<unsigned long long>(frame_index));
++		}
++		else
++		{
++			++helix_invalidation_errors;
++			U_LOG_W("Helix NVENC reference invalidation failed stream=%u frame=%llu status=%d",
++			        stream_idx,
++			        static_cast<unsigned long long>(frame_index),
++			        static_cast<int>(status));
++		}
++	}
++}
+@@
+ 	if (new_bitrate || new_framerate)
+ 	{
+@@
+ 		try
+ 		{
+ 			NVENC_CHECK(shared_state->fn.nvEncReconfigureEncoder(session_handle, &reconfig_params));
+ 			fps = new_framerate;
+ 			bitrate = new_bitrate;
+ 			idr_handler.reset();
++			helix_clear_reference_invalidations();
+ 
+ 			U_LOG_I("nvenc: reconfiguring succeeded.");
+@@
+ 	NV_ENC_PIC_PARAMS frame_params{
+ 	        .version = NV_ENC_PIC_PARAMS_VER,
+@@
+-	        .inputTimeStamp = 0,
++	        .inputTimeStamp = frame_index,
+ 	        .inputBuffer = inp_resource_params.mappedResource,
+@@
+ 	NV_ENC_LOCK_BITSTREAM buf_lock_params{
+@@
+ 	{
+ 		wivrn::trace::scope trace_nvenc(wivrn::trace::cpu_track::encoder, stream_idx, frame_index, "nvEncEncodePicture+Lock");
++		helix_drain_reference_invalidations();
+ 		NVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));
++		helix_last_submitted_frame.store(frame_index, std::memory_order_relaxed);
+ 		NVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &buf_lock_params));
+ 	}

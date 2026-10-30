@@ -30,6 +30,8 @@
 
 #include <array>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -109,6 +111,153 @@ std::unordered_map<video_encoder *, helix_pacing_stats> helix_pacing_stats_by_en
 
 std::mutex helix_rtx_registry_mutex;
 std::array<video_encoder *, 3> helix_rtx_encoder_registry{};
+
+enum class helix_encoded_case : uint8_t
+{
+	none,
+	rtx8,
+	gap9,
+	full_reference,
+};
+
+const char * helix_encoded_case_name(helix_encoded_case c)
+{
+	switch (c)
+	{
+		case helix_encoded_case::none:
+			return "none";
+		case helix_encoded_case::rtx8:
+			return "rtx8";
+		case helix_encoded_case::gap9:
+			return "gap9";
+		case helix_encoded_case::full_reference:
+			return "full_reference";
+	}
+	return "unknown";
+}
+
+struct helix_encoded_record
+{
+	helix_encoded_case scenario = helix_encoded_case::none;
+	uint64_t frame = 0;
+	uint64_t encoded_bytes = 0;
+	uint64_t dropped = 0;
+	uint64_t total_shards = 0;
+	bool feedback_seen = false;
+	bool sent_to_decoder = false;
+	bool incomplete_seen = false;
+	bool recovered = false;
+	uint64_t recovery_frame = 0;
+};
+
+struct helix_encoded_state
+{
+	std::mutex mutex;
+	uint8_t next_case = 0;
+	uint64_t last_injected_frame = 0;
+	std::unordered_map<uint64_t, helix_encoded_record> records;
+	std::optional<uint64_t> awaiting_recovery;
+};
+
+helix_encoded_state helix_encoded_torture;
+
+bool helix_encoded_torture_enabled()
+{
+	static const bool enabled = [] {
+		const char * value = std::getenv("HELIX_ENCODED_TORTURE");
+		return value && std::string_view(value) == "1";
+	}();
+	return enabled;
+}
+
+void helix_encoded_note_feedback(const from_headset::feedback & feedback)
+{
+	if (!helix_encoded_torture_enabled() || feedback.stream_index != 0)
+		return;
+
+	std::scoped_lock lock(helix_encoded_torture.mutex);
+	auto it = helix_encoded_torture.records.find(feedback.frame_index);
+	if (it != helix_encoded_torture.records.end() && !it->second.feedback_seen)
+	{
+		auto & record = it->second;
+		record.feedback_seen = true;
+		record.sent_to_decoder = feedback.sent_to_decoder != 0;
+		record.incomplete_seen = feedback.sent_to_decoder == 0;
+		std::fprintf(stderr,
+		             "HELIX_ENCODED_FEEDBACK scenario=%s stream=0 frame=%llu sent_to_decoder=%d\n",
+		             helix_encoded_case_name(record.scenario),
+		             static_cast<unsigned long long>(record.frame),
+		             record.sent_to_decoder);
+		std::fflush(stderr);
+		if (record.sent_to_decoder)
+		{
+			record.recovered = true;
+			record.recovery_frame = record.frame;
+			std::fprintf(stderr,
+			             "HELIX_ENCODED_RECOVERY scenario=%s stream=0 lost_frame=%llu recovered_frame=%llu delta=0 mode=same_frame\n",
+			             helix_encoded_case_name(record.scenario),
+			             static_cast<unsigned long long>(record.frame),
+			             static_cast<unsigned long long>(record.frame));
+			std::fflush(stderr);
+		}
+		else
+		{
+			helix_encoded_torture.awaiting_recovery = record.frame;
+		}
+	}
+
+	if (feedback.sent_to_decoder && helix_encoded_torture.awaiting_recovery &&
+	    feedback.frame_index > *helix_encoded_torture.awaiting_recovery)
+	{
+		auto lost = *helix_encoded_torture.awaiting_recovery;
+		auto lost_it = helix_encoded_torture.records.find(lost);
+		if (lost_it != helix_encoded_torture.records.end() && !lost_it->second.recovered)
+		{
+			auto & record = lost_it->second;
+			record.recovered = true;
+			record.recovery_frame = feedback.frame_index;
+			std::fprintf(stderr,
+			             "HELIX_ENCODED_RECOVERY scenario=%s stream=0 lost_frame=%llu recovered_frame=%llu delta=%llu mode=fresh_frame\n",
+			             helix_encoded_case_name(record.scenario),
+			             static_cast<unsigned long long>(lost),
+			             static_cast<unsigned long long>(feedback.frame_index),
+			             static_cast<unsigned long long>(feedback.frame_index - lost));
+			std::fflush(stderr);
+		}
+		helix_encoded_torture.awaiting_recovery.reset();
+	}
+}
+
+void helix_encoded_log_summary()
+{
+	if (!helix_encoded_torture_enabled())
+		return;
+	std::scoped_lock lock(helix_encoded_torture.mutex);
+	uint64_t feedback = 0;
+	uint64_t recovered = 0;
+	uint64_t dirty = 0;
+	for (const auto & [frame, record]: helix_encoded_torture.records)
+	{
+		feedback += record.feedback_seen;
+		recovered += record.recovered;
+		if (!record.feedback_seen || !record.recovered)
+			++dirty;
+		else if (record.scenario == helix_encoded_case::rtx8 && !record.sent_to_decoder)
+			++dirty;
+		else if (record.scenario != helix_encoded_case::rtx8 && !record.incomplete_seen)
+			++dirty;
+		else if (record.recovery_frame < record.frame || record.recovery_frame - record.frame > 3)
+			++dirty;
+	}
+	std::fprintf(stderr,
+	             "HELIX_ENCODED_TORTURE_SUMMARY injected=%zu feedback=%llu recovered=%llu dirty=%llu next_case=%u\n",
+	             helix_encoded_torture.records.size(),
+	             static_cast<unsigned long long>(feedback),
+	             static_cast<unsigned long long>(recovered),
+	             static_cast<unsigned long long>(dirty),
+	             helix_encoded_torture.next_case);
+	std::fflush(stderr);
+}
 
 uint64_t helix_duration_us(helix_pacing_clock::time_point newer, helix_pacing_clock::time_point older)
 {
@@ -475,6 +624,8 @@ video_encoder::~video_encoder()
 	        static_cast<unsigned long long>(helix_td_credit_bytes));
 
 	helix_log_pacing_summary(this);
+	if (stream_idx == 0)
+		helix_encoded_log_summary();
 }
 
 bool video_encoder::request_retransmission(uint8_t stream_index, uint64_t packet_sequence)
@@ -679,6 +830,7 @@ bool video_encoder::retransmit_cached(uint64_t packet_sequence)
 void video_encoder::on_feedback(const from_headset::feedback & feedback)
 {
 	assert(feedback.stream_index == stream_idx);
+	helix_encoded_note_feedback(feedback);
 	idr->on_feedback(feedback);
 }
 
@@ -868,6 +1020,68 @@ void video_encoder::helix_finish_time_diverse_frame(bool control)
 void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool control)
 {
 	std::lock_guard lock(mutex);
+
+	helix_encoded_case encoded_case = helix_encoded_case::none;
+	if (helix_encoded_torture_enabled() && stream_idx == 0)
+	{
+		std::scoped_lock torture_lock(helix_encoded_torture.mutex);
+		if (auto existing = helix_encoded_torture.records.find(shard.frame_idx); existing != helix_encoded_torture.records.end())
+		{
+			encoded_case = existing->second.scenario;
+		}
+		else if (shard.shard_idx == 0 && !control && helix_encoded_torture.next_case < 3)
+		{
+			auto * handler = dynamic_cast<default_idr_handler *>(idr.get());
+			const bool reference_p = handler && !handler->is_non_ref_frame(shard.frame_idx);
+			const bool previous_done = helix_encoded_torture.next_case == 0 ||
+			                           (helix_encoded_torture.records.contains(helix_encoded_torture.last_injected_frame) &&
+			                            helix_encoded_torture.records.at(helix_encoded_torture.last_injected_frame).recovered);
+			const bool spacing_ok = helix_encoded_torture.last_injected_frame == 0 ||
+			                        shard.frame_idx >= helix_encoded_torture.last_injected_frame + 20;
+			if (reference_p && previous_done && spacing_ok && shard.frame_idx >= 30)
+			{
+				helix_encoded_case candidate = helix_encoded_case::none;
+				switch (helix_encoded_torture.next_case)
+				{
+					case 0:
+						candidate = helix_encoded_case::rtx8;
+						break;
+					case 1:
+						candidate = helix_encoded_case::gap9;
+						break;
+					case 2:
+						candidate = helix_encoded_case::full_reference;
+						break;
+				}
+				const size_t minimum_bytes = candidate == helix_encoded_case::full_reference
+				                                     ? 1
+				                                     : 16 * to_headset::video_stream_data_shard::max_payload_size;
+				if (data.size() >= minimum_bytes)
+				{
+					encoded_case = candidate;
+					helix_encoded_torture.records.emplace(
+					        shard.frame_idx,
+					        helix_encoded_record{
+					                .scenario = candidate,
+					                .frame = shard.frame_idx,
+					                .encoded_bytes = data.size(),
+					        });
+					helix_encoded_torture.last_injected_frame = shard.frame_idx;
+					++helix_encoded_torture.next_case;
+					const unsigned drop_count = candidate == helix_encoded_case::rtx8 ? 8 : candidate == helix_encoded_case::gap9 ? 9
+					                                                                                                              : 0;
+					std::fprintf(stderr,
+					             "HELIX_ENCODED_INJECT scenario=%s stream=0 frame=%llu encoded_bytes=%zu drop_first=%u drop_count=%u\n",
+					             helix_encoded_case_name(candidate),
+					             static_cast<unsigned long long>(shard.frame_idx),
+					             data.size(),
+					             candidate == helix_encoded_case::full_reference ? 0u : 2u,
+					             drop_count);
+					std::fflush(stderr);
+				}
+			}
+		}
+	}
 	if (shard.shard_idx == 0)
 	{
 		if (control)
@@ -949,17 +1163,34 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 
 		helix_current_frame_bytes += std::distance(begin, next);
 		helix_current_frame_shards++;
-		try
+		bool helix_drop = false;
+		if (encoded_case == helix_encoded_case::full_reference)
+			helix_drop = !control;
+		else if (encoded_case == helix_encoded_case::rtx8)
+			helix_drop = !control && shard.shard_idx >= 2 && shard.shard_idx < 10;
+		else if (encoded_case == helix_encoded_case::gap9)
+			helix_drop = !control && shard.shard_idx >= 2 && shard.shard_idx < 11;
+
+		if (helix_drop)
 		{
-			if (control)
-				cnx->send_control(to_headset::video_stream_data_shard{shard});
-			else
-				cnx->send_stream(to_headset::video_stream_data_shard{shard});
+			std::scoped_lock torture_lock(helix_encoded_torture.mutex);
+			if (auto record = helix_encoded_torture.records.find(shard.frame_idx); record != helix_encoded_torture.records.end())
+				++record->second.dropped;
 		}
-		catch (...)
+		else
 		{
-			++helix_initial_send_errors;
-			// Ignore network errors
+			try
+			{
+				if (control)
+					cnx->send_control(to_headset::video_stream_data_shard{shard});
+				else
+					cnx->send_stream(to_headset::video_stream_data_shard{shard});
+			}
+			catch (...)
+			{
+				++helix_initial_send_errors;
+				// Ignore network errors
+			}
 		}
 		++shard.shard_idx;
 		shard.view_info.reset();
@@ -967,6 +1198,21 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 	}
 	if (end_of_frame)
 	{
+		if (encoded_case != helix_encoded_case::none)
+		{
+			std::scoped_lock torture_lock(helix_encoded_torture.mutex);
+			if (auto record = helix_encoded_torture.records.find(shard.frame_idx); record != helix_encoded_torture.records.end())
+			{
+				record->second.total_shards = helix_current_frame_shards;
+				std::fprintf(stderr,
+				             "HELIX_ENCODED_INJECT_DONE scenario=%s stream=0 frame=%llu dropped=%llu total_shards=%llu\n",
+				             helix_encoded_case_name(record->second.scenario),
+				             static_cast<unsigned long long>(record->second.frame),
+				             static_cast<unsigned long long>(record->second.dropped),
+				             static_cast<unsigned long long>(record->second.total_shards));
+				std::fflush(stderr);
+			}
+		}
 		auto send_span_us = helix_duration_us(helix_pacing_clock::now(), helix_frame_send_started_at);
 		helix_note_frame_sent(this, shard.frame_idx, helix_current_frame_bytes, helix_current_frame_shards, send_span_us);
 		helix_finish_time_diverse_frame(control);

@@ -34,6 +34,7 @@ bool operator==(const GUID & l, const GUID & r)
 }
 
 #include <algorithm>
+#include <cstdio>
 #include <stdexcept>
 
 #define NVENC_CHECK_NOENCODER(x)                                          \
@@ -220,6 +221,11 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 			U_LOG_I("Helix NVENC invalidated reference stream=%u frame=%llu",
 			        stream_idx,
 			        static_cast<unsigned long long>(frame_index));
+			std::fprintf(stderr,
+			             "HELIX_ENCODED_INVALIDATION stream=%u frame=%llu action=applied\n",
+			             stream_idx,
+			             static_cast<unsigned long long>(frame_index));
+			std::fflush(stderr);
 		}
 		else
 		{
@@ -230,6 +236,12 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 			        stream_idx,
 			        static_cast<unsigned long long>(frame_index),
 			        static_cast<int>(status));
+			std::fprintf(stderr,
+			             "HELIX_ENCODED_INVALIDATION stream=%u frame=%llu action=fallback_idr status=%d\n",
+			             stream_idx,
+			             static_cast<unsigned long long>(frame_index),
+			             static_cast<int>(status));
+			std::fflush(stderr);
 			video_encoder::on_feedback(feedback);
 			break;
 		}
@@ -296,6 +308,8 @@ video_encoder_nvenc::video_encoder_nvenc(
 	U_LOG_I("Helix NVENC reference invalidation stream=%u supported=%d",
 	        stream_idx,
 	        helix_ref_invalidation_supported);
+	std::fprintf(stderr, "HELIX_ENCODED_NVENC_CAP stream=%u supported=%d\n", stream_idx, helix_ref_invalidation_supported);
+	std::fflush(stderr);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"

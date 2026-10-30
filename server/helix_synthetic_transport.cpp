@@ -92,7 +92,7 @@ struct packet_plan
 	bool retransmission = false;
 };
 
-uint64_t mix64(uint64_t x)
+[[maybe_unused]] uint64_t mix64(uint64_t x)
 {
 	x += 0x9e3779b97f4a7c15ULL;
 	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -294,14 +294,14 @@ void note(score & s, bool good, bool fallback, bool recorded)
 	}
 }
 
-bool run_case(sender & tx,
-              wivrn_connection & connection,
-              score & s,
-              uint8_t stream,
-              uint64_t base,
-              uint16_t missing,
-              uint16_t start,
-              bool recorded)
+[[maybe_unused]] bool run_case(sender & tx,
+                               wivrn_connection & connection,
+                               score & s,
+                               uint8_t stream,
+                               uint64_t base,
+                               uint16_t missing,
+                               uint16_t start,
+                               bool recorded)
 {
 	observation obs;
 	const uint64_t first_missing_sequence = tx.next_sequence(stream) + start;
@@ -357,7 +357,7 @@ bool run_case(sender & tx,
 	return good;
 }
 
-bool run_duplicate_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
+[[maybe_unused]] bool run_duplicate_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
 {
 	observation obs;
 	const uint64_t duplicate_sequence = tx.reserve_sequence(stream);
@@ -377,7 +377,7 @@ bool run_duplicate_case(sender & tx, wivrn_connection & connection, uint8_t stre
 	return good;
 }
 
-bool run_reorder_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
+[[maybe_unused]] bool run_reorder_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
 {
 	observation obs;
 	for (uint16_t shard = 0; shard < 10; ++shard)
@@ -401,7 +401,7 @@ bool run_reorder_case(sender & tx, wivrn_connection & connection, uint8_t stream
 	return good;
 }
 
-bool run_late_old_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
+[[maybe_unused]] bool run_late_old_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
 {
 	observation obs;
 	for (uint16_t shard = 0; shard < 5; ++shard)
@@ -434,7 +434,7 @@ bool run_late_old_case(sender & tx, wivrn_connection & connection, uint8_t strea
 	return good;
 }
 
-bool run_frame_jump_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
+[[maybe_unused]] bool run_frame_jump_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
 {
 	observation obs;
 	const uint64_t jumped = frame + 3;
@@ -453,7 +453,7 @@ bool run_frame_jump_case(sender & tx, wivrn_connection & connection, uint8_t str
 	return good;
 }
 
-bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
+[[maybe_unused]] bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
 {
 	observation obs;
 	// Hold shard 0. Because no view_info for this frame has arrived yet, production

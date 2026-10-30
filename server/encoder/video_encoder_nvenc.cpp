@@ -75,6 +75,8 @@ bool operator==(const GUID & l, const GUID & r)
 namespace wivrn
 {
 
+void helix_encoded_note_feedback_for_nvenc(const from_headset::feedback & feedback);
+
 static auto encode_guid(video_codec codec)
 {
 	switch (codec)
@@ -153,6 +155,7 @@ void video_encoder_nvenc::set_init_params_fps(float framerate)
 
 void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
 {
+	helix_encoded_note_feedback_for_nvenc(feedback);
 	auto & idr_handler = static_cast<default_idr_handler &>(*idr);
 	if (!feedback.sent_to_decoder && helix_ref_invalidation_supported)
 	{

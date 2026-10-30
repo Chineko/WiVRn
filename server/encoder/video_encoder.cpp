@@ -381,6 +381,11 @@ void helix_log_pacing_summary(video_encoder * encoder)
 }
 } // namespace
 
+void helix_encoded_note_feedback_for_nvenc(const from_headset::feedback & feedback)
+{
+	helix_encoded_note_feedback(feedback);
+}
+
 video_encoder::sender::sender() :
         thread([this](std::stop_token t) {
 	        while (not t.stop_requested())
@@ -1112,7 +1117,10 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 	if (video_dump)
 		video_dump.write((char *)data.data(), data.size());
 
-	ssize_t max_payload_size = (cnx->has_stream() and not control) ? to_headset::video_stream_data_shard::max_payload_size : std::numeric_limits<uint32_t>::max();
+	const bool helix_force_torture_fragmentation = encoded_case == helix_encoded_case::rtx8 || encoded_case == helix_encoded_case::gap9;
+	ssize_t max_payload_size = ((cnx->has_stream() || helix_force_torture_fragmentation) and not control)
+	                                   ? to_headset::video_stream_data_shard::max_payload_size
+	                                   : std::numeric_limits<uint32_t>::max();
 
 	auto begin = data.begin();
 	auto end = data.end();

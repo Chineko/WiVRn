@@ -10,7 +10,7 @@ META="$BUILD_ROOT/vulkan-stimulus-metadata.txt"
 SEAL="$BUILD_ROOT/vulkan-stimulus-seal.txt"
 
 fail(){ echo "error: $*" >&2; exit 2; }
-for c in file grep ldd readelf sha256sum strings; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
+for c in file grep ldd readelf sha256sum; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
 for f in "$SRC" "$BIN" "$META"; do [[ -s "$f" ]] || fail "artifact missing: $f"; done
 [[ -x "$BIN" ]] || fail "stimulus is not executable"
 
@@ -31,7 +31,8 @@ for forbidden in 'XR_MND_headless' 'vkCmdClearColorImage' 'XrGraphicsBindingVulk
   ! grep -Fq "$forbidden" "$SRC" || fail "forbidden generated source marker present: $forbidden"
 done
 
-file "$BIN" | grep -Eq 'ELF 64-bit.*x86-64' || fail "unexpected stimulus binary format"
+FILE_INFO="$(file "$BIN")"
+grep -Eq 'ELF 64-bit.*x86-64' <<<"$FILE_INFO" || fail "unexpected stimulus binary format"
 DYNAMIC="$(readelf -d "$BIN")"
 grep -Fq 'libopenxr_loader.so.1' <<<"$DYNAMIC" || fail "stimulus does not depend on OpenXR loader"
 grep -Fq 'libvulkan.so.1' <<<"$DYNAMIC" || fail "stimulus does not depend on Vulkan loader"
@@ -39,8 +40,8 @@ LDD="$(ldd "$BIN")"
 ! grep -Fq 'not found' <<<"$LDD" || fail "stimulus has unresolved dynamic dependency"
 grep -Fq 'libopenxr_loader.so.1' <<<"$LDD" || fail "OpenXR loader missing from resolved dependency set"
 grep -Fq 'libvulkan.so.1' <<<"$LDD" || fail "Vulkan loader missing from resolved dependency set"
-strings "$BIN" | grep -Fq 'HELIX_VULKAN_ENTROPY patterns=8' || fail "entropy marker missing from compiled binary"
-strings "$BIN" | grep -Fq 'HELIX_VULKAN_DONE frames=%u' || fail "completion marker missing from compiled binary"
+grep -aFq 'HELIX_VULKAN_ENTROPY patterns=8' "$BIN" || fail "entropy marker missing from compiled binary"
+grep -aFq 'HELIX_VULKAN_DONE frames=%u' "$BIN" || fail "completion marker missing from compiled binary"
 
 SRC_SHA="$(sha256sum "$SRC" | awk '{print $1}')"
 BIN_SHA="$(sha256sum "$BIN" | awk '{print $1}')"

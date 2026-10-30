@@ -46,14 +46,14 @@ uint32_t helix_encoded_torture_cycles()
 
 uint64_t helix_encoded_torture_spacing_frames()
 {
-\tstatic const uint64_t spacing = [] {
+\tstatic const uint64_t spacing = []() -> uint64_t {
 \t\tconst char * value = std::getenv("HELIX_ENCODED_TORTURE_SPACING_FRAMES");
 \t\tif (!value || !*value)
-\t\t\treturn 20ull;
+\t\t\treturn 20;
 \t\tchar * end = nullptr;
 \t\tauto parsed = std::strtoull(value, &end, 10);
 \t\tif (!end || *end != '\\0' || parsed < 20 || parsed > 1000000)
-\t\t\treturn 20ull;
+\t\t\treturn 20;
 \t\treturn static_cast<uint64_t>(parsed);
 \t}();
 \treturn spacing;
@@ -82,6 +82,7 @@ once(
 required = [
     'HELIX_ENCODED_TORTURE_CYCLES',
     'HELIX_ENCODED_TORTURE_SPACING_FRAMES',
+    '[]() -> uint64_t',
     'next_case < helix_encoded_torture_cycles() * 3u',
     'helix_encoded_torture.last_injected_frame + helix_encoded_torture_spacing_frames()',
     'switch (helix_encoded_torture.next_case % 3u)',
@@ -96,6 +97,7 @@ for forbidden in [
     'next_case < 3)',
     'last_injected_frame + 20;',
     'switch (helix_encoded_torture.next_case)\\n',
+    'return 20ull;',
 ]:
     if forbidden in s:
         raise SystemExit(f"FAIL: stale sustained anchor remains: {forbidden}")

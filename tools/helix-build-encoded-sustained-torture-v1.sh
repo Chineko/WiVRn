@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_BASE="6e23563ec49c6ab8a5e76860b2497b5722c3f591"
-TRANSFORM_COMMIT="d792e25c40d0ca91b3096452a18b9cf9ef17ed69"
+TRANSFORM_COMMIT="379aed99940490d2422101fdda55871799afcef1"
 TRANSFORM_PATH="tools/helix-apply-encoded-sustained-torture-v1.py"
 SOURCE_BRANCH="helix-encoded-sustained-torture-v1-built"
 VERSION_PREFIX="helix-encoded-sustained-torture-v1"

@@ -155,27 +155,33 @@ void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
 	auto & idr_handler = static_cast<default_idr_handler &>(*idr);
 	if (!feedback.sent_to_decoder && helix_ref_invalidation_supported)
 	{
+		std::scoped_lock lock(helix_invalidation_mutex);
 		if (idr_handler.is_non_ref_frame(feedback.frame_index))
 		{
 			++helix_invalidation_nonref_skipped;
 		}
-		else
+		else if (idr_handler.can_defer_failed_reference(feedback.frame_index))
 		{
-			std::scoped_lock lock(helix_invalidation_mutex);
-			if (std::ranges::contains(helix_pending_invalidations, feedback.frame_index))
+			const bool duplicate = std::ranges::any_of(helix_pending_invalidations, [&](const auto & pending) {
+				return pending.frame_index == feedback.frame_index;
+			});
+			if (duplicate)
 			{
 				++helix_invalidation_duplicates;
+				return;
 			}
-			else
+			if (helix_pending_invalidations.size() == helix_invalidation_queue_limit)
 			{
-				if (helix_pending_invalidations.size() == helix_invalidation_queue_limit)
-				{
-					helix_pending_invalidations.pop_front();
-					++helix_invalidation_overflow;
-				}
-				helix_pending_invalidations.push_back(feedback.frame_index);
-				++helix_invalidation_queued;
+				auto overflow = helix_pending_invalidations.front();
+				helix_pending_invalidations.clear();
+				++helix_invalidation_overflow;
+				++helix_invalidation_fallback_idr;
+				video_encoder::on_feedback(overflow);
+				return;
 			}
+			helix_pending_invalidations.push_back(feedback);
+			++helix_invalidation_queued;
+			return;
 		}
 	}
 
@@ -184,14 +190,9 @@ void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
 
 void video_encoder_nvenc::reset()
 {
-	helix_clear_reference_invalidations();
-	video_encoder::reset();
-}
-
-void video_encoder_nvenc::helix_clear_reference_invalidations()
-{
 	std::scoped_lock lock(helix_invalidation_mutex);
 	helix_pending_invalidations.clear();
+	video_encoder::reset();
 }
 
 void video_encoder_nvenc::helix_drain_reference_invalidations()
@@ -200,12 +201,16 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 	const uint64_t newest = helix_last_submitted_frame.load(std::memory_order_relaxed);
 	while (!helix_pending_invalidations.empty())
 	{
-		const uint64_t frame_index = helix_pending_invalidations.front();
+		auto feedback = helix_pending_invalidations.front();
 		helix_pending_invalidations.pop_front();
+		const uint64_t frame_index = feedback.frame_index;
 		if (newest > frame_index && newest - frame_index > helix_invalidation_recent_horizon)
 		{
 			++helix_invalidation_stale;
-			continue;
+			++helix_invalidation_fallback_idr;
+			helix_pending_invalidations.clear();
+			video_encoder::on_feedback(feedback);
+			break;
 		}
 
 		NVENCSTATUS status = shared_state->fn.nvEncInvalidateRefFrames(session_handle, frame_index);
@@ -219,10 +224,14 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 		else
 		{
 			++helix_invalidation_errors;
-			U_LOG_W("Helix NVENC reference invalidation failed stream=%u frame=%llu status=%d",
+			++helix_invalidation_fallback_idr;
+			helix_pending_invalidations.clear();
+			U_LOG_W("Helix NVENC reference invalidation failed stream=%u frame=%llu status=%d; falling back to IDR",
 			        stream_idx,
 			        static_cast<unsigned long long>(frame_index),
 			        static_cast<int>(status));
+			video_encoder::on_feedback(feedback);
+			break;
 		}
 	}
 }
@@ -512,7 +521,7 @@ video_encoder_nvenc::~video_encoder_nvenc()
 		std::scoped_lock lock(helix_invalidation_mutex);
 		pending_invalidations = helix_pending_invalidations.size();
 	}
-	U_LOG_I("Helix NVENC invalidation summary stream=%u supported=%d queued=%llu applied=%llu nonref_skipped=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu pending=%zu",
+	U_LOG_I("Helix NVENC invalidation summary stream=%u supported=%d queued=%llu applied=%llu nonref_skipped=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu fallback_idr=%llu pending=%zu",
 	        stream_idx,
 	        helix_ref_invalidation_supported,
 	        static_cast<unsigned long long>(helix_invalidation_queued.load(std::memory_order_relaxed)),
@@ -522,6 +531,7 @@ video_encoder_nvenc::~video_encoder_nvenc()
 	        static_cast<unsigned long long>(helix_invalidation_overflow.load(std::memory_order_relaxed)),
 	        static_cast<unsigned long long>(helix_invalidation_stale.load(std::memory_order_relaxed)),
 	        static_cast<unsigned long long>(helix_invalidation_errors.load(std::memory_order_relaxed)),
+	        static_cast<unsigned long long>(helix_invalidation_fallback_idr.load(std::memory_order_relaxed)),
 	        pending_invalidations);
 	if (session_handle)
 		shared_state->fn.nvEncDestroyEncoder(session_handle);
@@ -636,8 +646,11 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 			NVENC_CHECK(shared_state->fn.nvEncReconfigureEncoder(session_handle, &reconfig_params));
 			fps = new_framerate;
 			bitrate = new_bitrate;
-			idr_handler.reset();
-			helix_clear_reference_invalidations();
+			{
+				std::scoped_lock lock(helix_invalidation_mutex);
+				helix_pending_invalidations.clear();
+				idr_handler.reset();
+			}
 
 			U_LOG_I("nvenc: reconfiguring succeeded.");
 		}
@@ -669,6 +682,7 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 	        .pictureStruct = NV_ENC_PIC_STRUCT_FRAME,
 	};
 
+	helix_drain_reference_invalidations();
 	auto frame_type = idr_handler.get_type(frame_index, stream_idx);
 	switch (frame_type)
 	{
@@ -687,7 +701,6 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 	};
 	{
 		wivrn::trace::scope trace_nvenc(wivrn::trace::cpu_track::encoder, stream_idx, frame_index, "nvEncEncodePicture+Lock");
-		helix_drain_reference_invalidations();
 		NVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));
 		helix_last_submitted_frame.store(frame_index, std::memory_order_relaxed);
 		NVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &buf_lock_params));

@@ -67,6 +67,7 @@ public:
 	bool should_skip(uint64_t frame_id, uint8_t stream_idx) override;
 	void set_non_ref(uint64_t frame_index);
 	bool is_non_ref_frame(uint64_t frame_index);
+	bool can_defer_failed_reference(uint64_t frame_index);
 	frame_type get_type(uint64_t frame_index, uint8_t stream_idx);
 };
 } // namespace wivrn

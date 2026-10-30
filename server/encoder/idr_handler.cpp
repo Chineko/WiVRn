@@ -110,6 +110,15 @@ bool default_idr_handler::is_non_ref_frame(uint64_t frame_index)
 	return non_ref_frames[frame_index % non_ref_frames.size()] == frame_index;
 }
 
+bool default_idr_handler::can_defer_failed_reference(uint64_t frame_index)
+{
+	std::unique_lock lock(mutex);
+	if (non_ref_frames[frame_index % non_ref_frames.size()] == frame_index)
+		return false;
+	auto * running_state = std::get_if<running>(&state);
+	return running_state && frame_index >= running_state->last_ack;
+}
+
 default_idr_handler::frame_type default_idr_handler::get_type(uint64_t frame_index, uint8_t stream_idx)
 {
 	std::unique_lock lock(mutex);

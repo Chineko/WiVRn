@@ -66,7 +66,7 @@ private:
 	static constexpr size_t helix_invalidation_queue_limit = 16;
 	static constexpr uint64_t helix_invalidation_recent_horizon = 64;
 	std::mutex helix_invalidation_mutex;
-	std::deque<uint64_t> helix_pending_invalidations;
+	std::deque<from_headset::feedback> helix_pending_invalidations;
 	std::atomic<uint64_t> helix_last_submitted_frame{0};
 	bool helix_ref_invalidation_supported = false;
 	std::atomic<uint64_t> helix_invalidation_queued{0};
@@ -76,11 +76,11 @@ private:
 	std::atomic<uint64_t> helix_invalidation_overflow{0};
 	std::atomic<uint64_t> helix_invalidation_stale{0};
 	std::atomic<uint64_t> helix_invalidation_errors{0};
+	std::atomic<uint64_t> helix_invalidation_fallback_idr{0};
 
 	NV_ENC_RC_PARAMS get_rc_params(uint64_t bitrate, float framerate);
 	void set_init_params_fps(float framerate);
 	void helix_drain_reference_invalidations();
-	void helix_clear_reference_invalidations();
 
 public:
 	video_encoder_nvenc(wivrn::vk_bundle & vk, const encoder_settings & settings, uint8_t stream_idx);

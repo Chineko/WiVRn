@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import hashlib
 import subprocess
 import sys
 
@@ -169,10 +168,11 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 \t\t\tif (helix_pending_invalidations.size() == helix_invalidation_queue_limit)
 \t\t\t{
 \t\t\t\tauto overflow = helix_pending_invalidations.front();
-\t\t\t\thelix_pending_invalidations.pop_front();
+\t\t\t\thelix_pending_invalidations.clear();
 \t\t\t\t++helix_invalidation_overflow;
 \t\t\t\t++helix_invalidation_fallback_idr;
 \t\t\t\tvideo_encoder::on_feedback(overflow);
+\t\t\t\treturn;
 \t\t\t}
 \t\t\thelix_pending_invalidations.push_back(feedback);
 \t\t\t++helix_invalidation_queued;
@@ -203,8 +203,9 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 \t\t{
 \t\t\t++helix_invalidation_stale;
 \t\t\t++helix_invalidation_fallback_idr;
+\t\t\thelix_pending_invalidations.clear();
 \t\t\tvideo_encoder::on_feedback(feedback);
-\t\t\tcontinue;
+\t\t\tbreak;
 \t\t}
 
 \t\tNVENCSTATUS status = shared_state->fn.nvEncInvalidateRefFrames(session_handle, frame_index);
@@ -219,11 +220,13 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 \t\t{
 \t\t\t++helix_invalidation_errors;
 \t\t\t++helix_invalidation_fallback_idr;
+\t\t\thelix_pending_invalidations.clear();
 \t\t\tU_LOG_W("Helix NVENC reference invalidation failed stream=%u frame=%llu status=%d; falling back to IDR",
 \t\t\t        stream_idx,
 \t\t\t        static_cast<unsigned long long>(frame_index),
 \t\t\t        static_cast<int>(status));
 \t\t\tvideo_encoder::on_feedback(feedback);
+\t\t\tbreak;
 \t\t}
 \t}
 }
@@ -247,16 +250,30 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
         '\t\t\t{\n\t\t\t\tstd::scoped_lock lock(helix_invalidation_mutex);\n\t\t\t\thelix_pending_invalidations.clear();\n\t\t\t\tidr_handler.reset();\n\t\t\t}',
         path,
     )
+    updated[path] = replace_once(
+        updated[path],
+        '\tauto frame_type = idr_handler.get_type(frame_index, stream_idx);',
+        '\thelix_drain_reference_invalidations();\n\tauto frame_type = idr_handler.get_type(frame_index, stream_idx);',
+        path,
+    )
+    updated[path] = replace_once(
+        updated[path],
+        '\t\thelix_drain_reference_invalidations();\n\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));',
+        '\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));',
+        path,
+    )
 
-    for path in EXPECTED:
-        Path(path).write_text(updated[path])
-
-    subprocess.run(["git", "diff", "--check", "--", *EXPECTED.keys()], check=True)
-    changed = set(subprocess.check_output(["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True).splitlines())
-    if changed != set(EXPECTED):
+    try:
+        for path in EXPECTED:
+            Path(path).write_text(updated[path])
+        subprocess.run(["git", "diff", "--check", "--", *EXPECTED.keys()], check=True)
+        changed = set(subprocess.check_output(["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True).splitlines())
+        if changed != set(EXPECTED):
+            raise RuntimeError(f"unexpected changed path set: {sorted(changed)}")
+    except Exception:
         for path, text in originals.items():
             Path(path).write_text(text)
-        raise RuntimeError(f"unexpected changed path set: {sorted(changed)}")
+        raise
 
     print("PASS: deferred-IDR source transformation applied")
     return 0

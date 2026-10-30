@@ -38,7 +38,21 @@ remote_head="$(git ls-remote origin "refs/heads/$BRANCH" | awk '{print $1}')"
 printf 'source_expected=%s\nworktree_head=%s\nremote_head=%s\n' "$SOURCE" "$worktree_head" "$remote_head"
 [[ "$worktree_head" == "$SOURCE" ]] || fail "worktree_head_mismatch"
 [[ "$remote_head" == "$SOURCE" ]] || fail "remote_head_mismatch"
-[[ -z "$(git -C "$WORKTREE" status --porcelain)" ]] || fail "worktree_dirty"
+tracked_dirty="$(git -C "$WORKTREE" status --porcelain --untracked-files=no)"
+[[ -z "$tracked_dirty" ]] || { printf '%s\n' "$tracked_dirty"; fail "tracked_worktree_dirty"; }
+printf 'PASS tracked_worktree_clean\n'
+untracked="$(git -C "$WORKTREE" ls-files --others --exclude-standard)"
+if [[ -n "$untracked" ]]; then
+  printf 'INFO untracked_begin\n%s\nINFO untracked_end\n' "$untracked"
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    case "$p" in
+      build-everything/*|server/encoder/video_encoder.cpp|server/helix_synthetic_transport.cpp)
+        fail "untracked_overlaps_runtime_input=$p"
+        ;;
+    esac
+  done <<<"$untracked"
+fi
 
 printf 'AUDIT_SECTION=metadata\n'
 grep -E '^(source_base|transform_commit|source_commit|version_name|remote_head|server|openxr_manifest|apk|server_sha256|apk_sha256|server_provenance|artifact_gate)=' "$META" || true

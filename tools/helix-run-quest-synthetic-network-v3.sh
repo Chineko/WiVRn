@@ -13,7 +13,7 @@ ARTIFACT_GATE="artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source"
 TIMEOUT_SECONDS=240
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git adb aapt sha256sum awk sed grep ip python3 timeout stdbuf; do
+for c in git adb aapt sha256sum awk sed grep ip python3 timeout stdbuf tr head systemctl pkill sleep cat; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 
@@ -68,14 +68,21 @@ mkdir -p "$evidence"
 printf 'source_commit=%s\nserver_sha256=%s\napk_sha256=%s\npackage=%s\nversion=%s\nquest_wlan0=%s\nhost_route=%s\n' \
     "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$package" "$version" "$quest_ip" "$route" >"$evidence/metadata.txt"
 
+service_was_active=0
+if systemctl --user is-active --quiet wivrn.service 2>/dev/null; then
+    service_was_active=1
+fi
 cleanup(){
     set +e
     [[ -n "${server_pid:-}" ]] && kill "$server_pid" 2>/dev/null
     adb shell am force-stop "$package" >/dev/null 2>&1
+    if [[ "$service_was_active" -eq 1 ]]; then
+        systemctl --user start wivrn.service >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT INT TERM
 
-# Avoid a competing user service/server. This is best-effort and does not alter its enablement state.
+# Avoid a competing user service/server, but restore it on exit if it was active.
 systemctl --user stop wivrn.service >/dev/null 2>&1 || true
 pkill -x wivrn-server >/dev/null 2>&1 || true
 sleep 1
@@ -117,19 +124,23 @@ echo "$exit_line" | grep -Fq 'result=0' || fail "synthetic runner exited nonzero
 python3 - "$result_line" <<'PY'
 import re, sys
 line=sys.argv[1]
-vals=dict(re.findall(r'(pass|good_ratio|fallback_ratio|recorded_ratio|envelope_ratio|ordering_ratio|rtx_ratio|catastrophic)=([0-9.]+)', line))
-required=['pass','good_ratio','fallback_ratio','recorded_ratio','envelope_ratio','ordering_ratio','rtx_ratio','catastrophic']
-missing=[k for k in required if k not in vals]
+keys=['pass','total','good','good_ratio','fallback_total','fallback_good','fallback_ratio','recorded_total','recorded_good','recorded_ratio','envelope_total','envelope_good','envelope_ratio','ordering_total','ordering_good','ordering_ratio','rtx_total','rtx_good','rtx_ratio','catastrophic']
+vals={k:v for k,v in re.findall(r'([A-Za-z_]+)=([0-9.]+)', line) if k in keys}
+missing=[k for k in keys if k not in vals]
 if missing:
     raise SystemExit('FAIL: result fields missing: '+','.join(missing))
 for k in ['good_ratio','fallback_ratio','recorded_ratio','envelope_ratio','ordering_ratio','rtx_ratio']:
     if float(vals[k]) < 0.95:
         raise SystemExit(f'FAIL: {k}={vals[k]} below 0.95')
+if int(vals['recorded_total']) != 10:
+    raise SystemExit('FAIL: recorded corpus total='+vals['recorded_total']+' expected 10')
+if int(vals['recorded_good']) != 10:
+    raise SystemExit('FAIL: recorded corpus not clean: '+vals['recorded_good']+'/10')
 if int(float(vals['catastrophic'])) != 0:
     raise SystemExit('FAIL: catastrophic='+vals['catastrophic'])
 if vals['pass'] != '1':
     raise SystemExit('FAIL: production synthetic pass bit='+vals['pass'])
-print('NETWORK_SYNTHETIC_GATE=PASS overall/fallback/recorded/envelope/ordering/rtx>=0.95 catastrophic=0')
+print('NETWORK_SYNTHETIC_GATE=PASS ratios>=0.95 recorded=10/10 catastrophic=0')
 PY
 
 printf '%s\n' "$result_line"

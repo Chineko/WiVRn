@@ -6,10 +6,11 @@ PINNED_NETWORK_RUNNER_PATH="tools/helix-run-encoded-nvenc-torture-network-promot
 START_DELAY="${HELIX_START_DELAY:-20}"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git bash python3 mktemp grep; do
+for c in git bash python3 mktemp grep cp; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 [[ "$START_DELAY" =~ ^[0-9]+$ ]] || fail "HELIX_START_DELAY must be a nonnegative integer"
+export START_DELAY
 
 orig="$(mktemp)"
 runner="$(mktemp)"
@@ -28,10 +29,6 @@ anchor='bash -n "$PATCHED"\n'
 if s.count(anchor) != 1:
     raise SystemExit('FAIL: promotion PATCHED syntax-check anchor count='+str(s.count(anchor)))
 
-# PATCHED is the exact v3 strict launcher after the already-audited promotion
-# identity substitutions. Add one transformation to its existing final-runtime
-# transformer: replace only the [4/8] stimulus announcement with an unplug gate,
-# countdown, then the original announcement.
 block=r'''python3 - "$PATCHED" "$START_DELAY" <<'PY_SPATIAL'
 from pathlib import Path
 import sys

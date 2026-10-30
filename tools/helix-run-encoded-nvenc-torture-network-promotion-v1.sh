@@ -18,16 +18,8 @@ APK_SHA256="cdff41578fc307077b4d3ad05a90233dadec9146e5c8bb87243b4d83021abc76"
 VERSION_NAME="helix-synthetic-network-promotion-v1-6e23563ec49c6ab8a5e76860b2497b5722c3f591"
 ARTIFACT_GATE="artifact_gate=PASS synthetic-network-promotion-v1-server-apk-exact-source"
 
-OLD_SOURCE_COMMIT="951ce95cd2ea14bf34e099d2b7e56f272d05cdac"
-OLD_BUILD_ROOT='$HOME/helix-encoded-nvenc-fix-v3-build-20261030-185452'
-OLD_APK='$BUILD_ROOT/helix-encoded-nvenc-fix-v3-951ce95cd2ea.apk'
-OLD_SERVER_SHA256="1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af"
-OLD_APK_SHA256="1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c"
-OLD_VERSION_NAME="helix-encoded-fix-v3-951ce95cd2ea14bf34e099d2b7e56f272d05cdac"
-OLD_ARTIFACT_GATE="artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source"
-
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git adb sha256sum awk grep ip python3 bash; do
+for c in git adb sha256sum awk grep ip python3 bash tr head cp mktemp; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 
@@ -82,41 +74,45 @@ git show "${PINNED_DIRECT_RUNNER_COMMIT}:${PINNED_DIRECT_RUNNER_PATH}" >"$DIRECT
 grep -Fq 'shell ip -4 addr show wlan0' "$DIRECT" || fail "encoded runner does not derive Quest wlan0 address"
 grep -Fq 'ip -4 route get "$QUEST_IP"' "$DIRECT" || fail "encoded runner does not derive host route to Quest"
 grep -Fq 'wivrn+tcp://${HOST_IP}' "$DIRECT" || fail "encoded runner does not launch explicit LAN URI"
-grep -Fq "export HELIX_ENCODED_TORTURE=1" "$DIRECT" || fail "encoded torture enable missing"
+grep -Fq 'export HELIX_ENCODED_TORTURE=1' "$DIRECT" || fail "encoded torture enable missing"
 
-# Compose by changing artifact identity only in the exact previously-passing v3 launcher.
+# Compose by changing only contextual artifact-identity anchors in the exact previously-passing v3 launcher.
 git cat-file -e "${PINNED_ENCODED_LAUNCHER_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$PINNED_ENCODED_LAUNCHER_COMMIT"
 git show "${PINNED_ENCODED_LAUNCHER_COMMIT}:${PINNED_ENCODED_LAUNCHER_PATH}" >"$ORIG"
 cp "$ORIG" "$PATCHED"
-python3 - "$PATCHED" "$ORIG" \
-  "$OLD_SOURCE_COMMIT" "$SOURCE_COMMIT" \
-  "$OLD_BUILD_ROOT" "$BUILD_ROOT" \
-  "$OLD_APK" '$BUILD_ROOT/helix-synthetic-network-promotion-v1-6e23563ec49c.apk' \
-  "$OLD_SERVER_SHA256" "$SERVER_SHA256" \
-  "$OLD_APK_SHA256" "$APK_SHA256" \
-  "$OLD_VERSION_NAME" "$VERSION_NAME" \
-  "$OLD_ARTIFACT_GATE" "$ARTIFACT_GATE" <<'PY'
+python3 - "$PATCHED" "$ORIG" "$SOURCE_COMMIT" "$BUILD_ROOT" "$SERVER_SHA256" "$APK_SHA256" "$VERSION_NAME" "$ARTIFACT_GATE" <<'PY'
 from pathlib import Path
 import sys
 patched=Path(sys.argv[1]); orig=Path(sys.argv[2]).read_text()
-pairs=list(zip(sys.argv[3::2],sys.argv[4::2]))
+source,build_root,server_sha,apk_sha,version,gate=sys.argv[3:]
 s=patched.read_text()
-for old,new in pairs:
+repls=[
+('     \'SOURCE_COMMIT="951ce95cd2ea14bf34e099d2b7e56f272d05cdac"\',', f'     \'SOURCE_COMMIT="{source}"\','),
+('     \'BUILD_ROOT="$HOME/helix-encoded-nvenc-fix-v3-build-20261030-185452"\',', f'     \'BUILD_ROOT="{build_root}"\','),
+('     \'APK="$BUILD_ROOT/helix-encoded-nvenc-fix-v3-951ce95cd2ea.apk"\',', '     \'APK="$BUILD_ROOT/helix-synthetic-network-promotion-v1-6e23563ec49c.apk"\','),
+('     \'SERVER_SHA256="1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af"\',', f'     \'SERVER_SHA256="{server_sha}"\','),
+('     \'APK_SHA256="1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c"\',', f'     \'APK_SHA256="{apk_sha}"\','),
+('     \'VERSION_NAME="helix-encoded-fix-v3-951ce95cd2ea14bf34e099d2b7e56f272d05cdac"\',', f'     \'VERSION_NAME="{version}"\','),
+("new_gate='artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source'", f"new_gate={gate!r}"),
+("grep -Fq '951ce95cd2ea14bf34e099d2b7e56f272d05cdac' \"$tmp\" || { echo \"FAIL: v3 source binding missing\" >&2; exit 2; }", f"grep -Fq '{source}' \"$tmp\" || {{ echo \"FAIL: promotion source binding missing\" >&2; exit 2; }}"),
+("grep -Fq '1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af' \"$tmp\" || { echo \"FAIL: v3 server hash binding missing\" >&2; exit 2; }", f"grep -Fq '{server_sha}' \"$tmp\" || {{ echo \"FAIL: promotion server hash binding missing\" >&2; exit 2; }}"),
+("grep -Fq '1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c' \"$tmp\" || { echo \"FAIL: v3 APK hash binding missing\" >&2; exit 2; }", f"grep -Fq '{apk_sha}' \"$tmp\" || {{ echo \"FAIL: promotion APK hash binding missing\" >&2; exit 2; }}"),
+]
+for old,new in repls:
     n=s.count(old)
     if n != 1:
-        raise SystemExit(f'FAIL: artifact identity anchor count={n}: {old}')
+        raise SystemExit(f'FAIL: contextual identity anchor count={n}: {old}')
     s=s.replace(old,new,1)
 patched.write_text(s)
-# Reverse every allowed substitution and require byte-for-byte identity with the proven launcher.
 normalized=s
-for old,new in reversed(pairs):
+for old,new in reversed(repls):
     n=normalized.count(new)
     if n != 1:
-        raise SystemExit(f'FAIL: normalized identity anchor count={n}: {new}')
+        raise SystemExit(f'FAIL: normalization anchor count={n}: {new}')
     normalized=normalized.replace(new,old,1)
 if normalized != orig:
-    raise SystemExit('FAIL: patched encoded launcher differs beyond approved artifact identity substitutions')
-print('ENCODED_NETWORK_COMPOSITION_AUDIT=PASS byte-identical-after-identity-normalization')
+    raise SystemExit('FAIL: patched encoded launcher differs beyond approved contextual identity substitutions')
+print('ENCODED_NETWORK_COMPOSITION_AUDIT=PASS byte-identical-after-contextual-identity-normalization')
 PY
 
 bash -n "$PATCHED"
@@ -125,9 +121,6 @@ grep -Fq "$SERVER_SHA256" "$PATCHED" || fail "promotion server hash binding miss
 grep -Fq "$APK_SHA256" "$PATCHED" || fail "promotion APK hash binding missing"
 grep -Fq "$VERSION_NAME" "$PATCHED" || fail "promotion version binding missing"
 grep -Fq "$ARTIFACT_GATE" "$PATCHED" || fail "promotion artifact gate binding missing"
-! grep -Fq "$OLD_SOURCE_COMMIT" "$PATCHED" || fail "stale v3 source binding remains"
-! grep -Fq "$OLD_SERVER_SHA256" "$PATCHED" || fail "stale v3 server hash remains"
-! grep -Fq "$OLD_APK_SHA256" "$PATCHED" || fail "stale v3 APK hash remains"
 
 echo 'ENCODED_NETWORK_PROMOTION_PREFLIGHT=PASS exact-promotion-artifacts proven-v3-encoded-runner explicit-lan-path'
 exec bash "$PATCHED"

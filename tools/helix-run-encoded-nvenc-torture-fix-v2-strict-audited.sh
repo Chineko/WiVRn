@@ -16,17 +16,33 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1])
 s=p.read_text()
-old='''from pathlib import Path\nimport re\np=Path("$EMITTED")\n'''
-new='''from pathlib import Path\nimport re, sys\np=Path(sys.argv[1])\n'''
-if s.count(old) != 1:
-    raise SystemExit(f"FAIL: emitted-path correction anchor count={s.count(old)}")
-s=s.replace(old,new,1)
+
+old_path='''from pathlib import Path\nimport re\np=Path("$EMITTED")\n'''
+new_path='''from pathlib import Path\nimport re, sys\np=Path(sys.argv[1])\n'''
+if s.count(old_path) != 1:
+    raise SystemExit(f"FAIL: emitted-path correction anchor count={s.count(old_path)}")
+s=s.replace(old_path,new_path,1)
+
+old_open="pattern=re.compile(r'''"
+new_open='pattern=re.compile(r"""'
+if s.count(old_open) != 1:
+    raise SystemExit(f"FAIL: regex-open correction anchor count={s.count(old_open)}")
+s=s.replace(old_open,new_open,1)
+
+old_close="''', re.S)"
+new_close='""", re.S)'
+if s.count(old_close) != 1:
+    raise SystemExit(f"FAIL: regex-close correction anchor count={s.count(old_close)}")
+s=s.replace(old_close,new_close,1)
+
 p.write_text(s)
 PY
 
 bash -n "$tmp"
 grep -Fq 'p=Path(sys.argv[1])' "$tmp" || { echo "FAIL: corrected emitted path binding missing" >&2; exit 2; }
 ! grep -Fq 'p=Path("$EMITTED")' "$tmp" || { echo "FAIL: stale literal emitted path remains" >&2; exit 2; }
+grep -Fq 'pattern=re.compile(r"""' "$tmp" || { echo "FAIL: corrected regex delimiter missing" >&2; exit 2; }
+! grep -Fq "pattern=re.compile(r'''" "$tmp" || { echo "FAIL: stale conflicting regex delimiter remains" >&2; exit 2; }
 grep -Fq 'FIX_V2_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-unchanged' "$tmp" || { echo "FAIL: fix-v2 binding gate missing" >&2; exit 2; }
 
 exec bash "$tmp"

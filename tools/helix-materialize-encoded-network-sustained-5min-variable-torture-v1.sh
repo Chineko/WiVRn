@@ -92,6 +92,7 @@ for x in [
  'HELIX_ENCODED_TORTURE_CYCLES:-30',
  'HELIX_ENCODED_TORTURE_SPACING_FRAMES:-300',
  'helix_vulkan_stimulus_sustained_v1.cpp',
+ 'helix-vulkan-stimulus-sustained-v1',
  'vulkan-stimulus-sustained-v1-seal.txt',
  'vulkan-stimulus-sustained-v1-metadata.txt',
  'build_tooling_commit=e5c77bc488ebc4eb3d8c03e66511cd1c60daa271',

@@ -29,7 +29,7 @@ diff --git a/server/encoder/video_encoder_nvenc.h b/server/encoder/video_encoder
 +	static constexpr uint64_t helix_invalidation_recent_horizon = 256;
 +	std::mutex helix_invalidation_mutex;
 +	std::deque<uint64_t> helix_pending_invalidations;
-+	std::atomic_uint64_t helix_last_submitted_frame{0};
++	std::atomic<uint64_t> helix_last_submitted_frame{0};
 +	uint64_t helix_invalidation_queued = 0;
 +	uint64_t helix_invalidation_applied = 0;
 +	uint64_t helix_invalidation_duplicates = 0;
@@ -126,6 +126,26 @@ diff --git a/server/encoder/video_encoder_nvenc.cpp b/server/encoder/video_encod
 +		}
 +	}
 +}
+@@
+ video_encoder_nvenc::~video_encoder_nvenc()
+ {
++	size_t pending_invalidations = 0;
++	{
++		std::scoped_lock lock(helix_invalidation_mutex);
++		pending_invalidations = helix_pending_invalidations.size();
++	}
++	U_LOG_I("Helix NVENC invalidation summary stream=%u queued=%llu applied=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu pending=%zu",
++	        stream_idx,
++	        static_cast<unsigned long long>(helix_invalidation_queued),
++	        static_cast<unsigned long long>(helix_invalidation_applied),
++	        static_cast<unsigned long long>(helix_invalidation_duplicates),
++	        static_cast<unsigned long long>(helix_invalidation_overflow),
++	        static_cast<unsigned long long>(helix_invalidation_stale),
++	        static_cast<unsigned long long>(helix_invalidation_errors),
++	        pending_invalidations);
+ 	if (session_handle)
+ 		shared_state->fn.nvEncDestroyEncoder(session_handle);
+ }
 @@
  	if (new_bitrate || new_framerate)
  	{

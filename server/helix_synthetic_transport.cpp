@@ -485,16 +485,326 @@ bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t str
 	return good;
 }
 
+enum class boundary_class
+{
+	clean_success,
+	clean_recovery,
+	degraded,
+	hard_failure,
+};
+
+const char * boundary_name(boundary_class c)
+{
+	switch (c)
+	{
+		case boundary_class::clean_success:
+			return "clean_success";
+		case boundary_class::clean_recovery:
+			return "clean_recovery";
+		case boundary_class::degraded:
+			return "degraded";
+		case boundary_class::hard_failure:
+			return "hard_failure";
+	}
+	return "unknown";
+}
+
+struct boundary_score
+{
+	uint64_t cases = 0;
+	uint64_t clean_success = 0;
+	uint64_t clean_recovery = 0;
+	uint64_t degraded = 0;
+	uint64_t hard = 0;
+	bool terminal = false;
+};
+
+void note_boundary(boundary_score & score,
+                   const char * axis,
+                   uint64_t level,
+                   uint8_t stream,
+                   boundary_class classification,
+                   bool primary_ok,
+                   bool recovery_ok,
+                   bool gap_ok,
+                   size_t feedback,
+                   size_t gaps,
+                   size_t rtx,
+                   const char * mode)
+{
+	++score.cases;
+	switch (classification)
+	{
+		case boundary_class::clean_success:
+			++score.clean_success;
+			break;
+		case boundary_class::clean_recovery:
+			++score.clean_recovery;
+			break;
+		case boundary_class::degraded:
+			++score.degraded;
+			break;
+		case boundary_class::hard_failure:
+			++score.hard;
+			break;
+	}
+	std::fprintf(stderr,
+	             "HELIX_BOUNDARY axis=%s level=%llu stream=%u class=%s mode=%s primary_ok=%d recovery_ok=%d gap_ok=%d feedback=%zu gaps=%zu rtx=%zu\n",
+	             axis,
+	             static_cast<unsigned long long>(level),
+	             stream,
+	             boundary_name(classification),
+	             mode,
+	             primary_ok,
+	             recovery_ok,
+	             gap_ok,
+	             feedback,
+	             gaps,
+	             rtx);
+	std::fflush(stderr);
+}
+
+bool resync(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t & frame, const char * axis)
+{
+	observation obs;
+	frame += 4;
+	tx.send_frame(packet_plan{.stream = stream, .frame_idx = frame});
+	collect(connection, obs, per_scenario_timeout);
+	const bool ok = feedback_success(obs, stream, frame);
+	std::fprintf(stderr,
+	             "HELIX_BOUNDARY_RESYNC axis=%s stream=%u frame=%llu pass=%d feedback=%zu gaps=%zu rtx=%zu\n",
+	             axis,
+	             stream,
+	             static_cast<unsigned long long>(frame),
+	             ok,
+	             obs.feedback.size(),
+	             obs.gaps.size(),
+	             obs.rtx.size());
+	std::fflush(stderr);
+	++frame;
+	return ok;
+}
+
+boundary_class boundary_loss_depth(sender & tx,
+                                   wivrn_connection & connection,
+                                   uint8_t stream,
+                                   uint64_t & frame,
+                                   uint16_t missing,
+                                   boundary_score & score)
+{
+	observation obs;
+	const uint16_t start = missing == shards_per_frame ? 0 : (missing ? 1 : 0);
+	const uint64_t first_missing = tx.next_sequence(stream) + start;
+	const uint64_t base = frame;
+	tx.send_frame(packet_plan{.stream = stream, .frame_idx = base, .omitted = contiguous_omission(missing, start)});
+	tx.send_frame(packet_plan{.stream = stream, .frame_idx = base + 1});
+	collect(connection, obs, per_scenario_timeout);
+	const bool primary_ok = missing ? feedback_incomplete(obs, stream, base) : feedback_success(obs, stream, base);
+	const bool recovery_ok = feedback_success(obs, stream, base + 1);
+	const bool gap_ok = missing == 0 || gap_covers(obs, stream, first_missing, missing);
+	boundary_class c;
+	if (missing == 0 && primary_ok && recovery_ok)
+		c = boundary_class::clean_success;
+	else if (missing > 0 && primary_ok && recovery_ok && gap_ok)
+		c = boundary_class::clean_recovery;
+	else if (recovery_ok)
+		c = boundary_class::degraded;
+	else
+		c = boundary_class::hard_failure;
+	frame = base + 2;
+	note_boundary(score, "loss_depth", missing, stream, c, primary_ok, recovery_ok, gap_ok, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), missing ? "next_frame" : "none");
+	return c;
+}
+
+boundary_class boundary_full_frame_run(sender & tx,
+                                       wivrn_connection & connection,
+                                       uint8_t stream,
+                                       uint64_t & frame,
+                                       uint16_t count,
+                                       boundary_score & score)
+{
+	observation obs;
+	const uint64_t first_missing = tx.next_sequence(stream);
+	const uint64_t base = frame;
+	for (uint16_t i = 0; i < count; ++i)
+		tx.send_frame(packet_plan{.stream = stream, .frame_idx = base + i, .omitted = contiguous_omission(shards_per_frame, 0)});
+	tx.send_frame(packet_plan{.stream = stream, .frame_idx = base + count});
+	collect(connection, obs, per_scenario_timeout);
+	const bool recovery_ok = feedback_success(obs, stream, base + count);
+	const bool gap_ok = gap_covers(obs, stream, first_missing, uint64_t(count) * shards_per_frame);
+	const bool primary_ok = recovery_ok;
+	const boundary_class c = recovery_ok && gap_ok ? boundary_class::clean_recovery : recovery_ok ? boundary_class::degraded
+	                                                                                              : boundary_class::hard_failure;
+	frame = base + count + 1;
+	note_boundary(score, "full_frame_run", count, stream, c, primary_ok, recovery_ok, gap_ok, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), "frame_jump_recovery");
+	return c;
+}
+
+boundary_class boundary_reorder_distance(sender & tx,
+                                         wivrn_connection & connection,
+                                         uint8_t stream,
+                                         uint64_t & frame,
+                                         uint16_t distance,
+                                         boundary_score & score)
+{
+	observation obs;
+	const uint64_t base = frame;
+	tx.send_explicit_shard(stream, base, 0, tx.reserve_sequence(stream));
+	const uint64_t held_sequence = tx.reserve_sequence(stream);
+	for (uint16_t shard = 2; shard < 2 + distance; ++shard)
+		tx.send_explicit_shard(stream, base, shard, tx.reserve_sequence(stream));
+	tx.send_explicit_shard(stream, base, 1, held_sequence);
+	for (uint16_t shard = uint16_t(2 + distance); shard < shards_per_frame; ++shard)
+		tx.send_explicit_shard(stream, base, shard, tx.reserve_sequence(stream));
+	collect(connection, obs, per_scenario_timeout);
+	const bool primary_ok = feedback_success(obs, stream, base);
+	const bool gap_ok = gap_covers(obs, stream, held_sequence, 1);
+	const boundary_class c = primary_ok && gap_ok ? boundary_class::clean_success : primary_ok ? boundary_class::degraded
+	                                                                                           : boundary_class::hard_failure;
+	++frame;
+	note_boundary(score, "reorder_distance", distance, stream, c, primary_ok, primary_ok, gap_ok, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), "late_same_frame");
+	return c;
+}
+
+boundary_class boundary_lateness_ms(sender & tx,
+                                    wivrn_connection & connection,
+                                    uint8_t stream,
+                                    uint64_t & frame,
+                                    uint16_t delay_ms,
+                                    boundary_score & score)
+{
+	observation obs;
+	const uint64_t base = frame;
+	tx.send_explicit_shard(stream, base, 0, tx.reserve_sequence(stream));
+	const uint64_t held_sequence = tx.reserve_sequence(stream);
+	for (uint16_t shard = 2; shard < shards_per_frame; ++shard)
+		tx.send_explicit_shard(stream, base, shard, tx.reserve_sequence(stream));
+	std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+	tx.send_explicit_shard(stream, base, 1, held_sequence);
+	collect(connection, obs, per_scenario_timeout);
+	const bool primary_ok = feedback_success(obs, stream, base);
+	const bool gap_ok = gap_covers(obs, stream, held_sequence, 1);
+	const boundary_class c = primary_ok && gap_ok ? boundary_class::clean_success : primary_ok ? boundary_class::degraded
+	                                                                                           : boundary_class::hard_failure;
+	++frame;
+	note_boundary(score, "lateness_ms", delay_ms, stream, c, primary_ok, primary_ok, gap_ok, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), "held_shard");
+	return c;
+}
+
+boundary_class boundary_frame_jump(sender & tx,
+                                   wivrn_connection & connection,
+                                   uint8_t stream,
+                                   uint64_t & frame,
+                                   uint16_t jump,
+                                   boundary_score & score)
+{
+	observation obs;
+	const uint64_t base = frame;
+	const uint64_t target = base + jump;
+	tx.send_frame(packet_plan{.stream = stream, .frame_idx = target});
+	collect(connection, obs, per_scenario_timeout);
+	const bool recovery_ok = feedback_success(obs, stream, target);
+	const bool primary_ok = jump == 0 ? recovery_ok : feedback_incomplete(obs, stream, base);
+	const boundary_class c = recovery_ok && (jump == 0 || primary_ok) ? (jump == 0 ? boundary_class::clean_success : boundary_class::clean_recovery) : recovery_ok ? boundary_class::degraded
+	                                                                                                                                                               : boundary_class::hard_failure;
+	frame = target + 1;
+	note_boundary(score, "frame_jump", jump, stream, c, primary_ok, recovery_ok, true, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), jump ? "jump_recovery" : "none");
+	return c;
+}
+
+boundary_class boundary_rtx_pressure(sender & tx,
+                                     wivrn_connection & connection,
+                                     uint8_t stream,
+                                     uint64_t & frame,
+                                     uint16_t missing,
+                                     boundary_score & score)
+{
+	observation obs;
+	const uint64_t base = frame;
+	std::vector<std::pair<uint16_t, uint64_t>> held;
+	held.reserve(missing);
+	for (uint16_t shard = 0; shard < missing; ++shard)
+		held.emplace_back(shard, tx.reserve_sequence(stream));
+	for (uint16_t shard = missing; shard < shards_per_frame; ++shard)
+		tx.send_explicit_shard(stream, base, shard, tx.reserve_sequence(stream));
+	collect(connection, obs, 150ms);
+	std::set<uint64_t> requested;
+	for (const auto & request: obs.rtx)
+		if (request.stream_index == stream)
+			requested.insert(request.packet_sequence);
+	for (const auto & [shard, sequence]: held)
+		if (requested.contains(sequence))
+			tx.send_explicit_shard(stream, base, shard, sequence, true);
+	collect(connection, obs, per_scenario_timeout);
+	const bool target_ok = feedback_success(obs, stream, base);
+	const bool exact_rtx = requested.size() == missing;
+	const bool over_cap = missing > 8;
+	if (target_ok && exact_rtx)
+	{
+		++frame;
+		note_boundary(score, "rtx_pressure", missing, stream, boundary_class::clean_recovery, true, true, true, obs.feedback.size(), obs.gaps.size(), requested.size(), "rtx");
+		return boundary_class::clean_recovery;
+	}
+
+	observation recovery_obs = obs;
+	tx.send_frame(packet_plan{.stream = stream, .frame_idx = base + 1});
+	collect(connection, recovery_obs, per_scenario_timeout);
+	const bool recovery_ok = feedback_success(recovery_obs, stream, base + 1);
+	const bool primary_ok = feedback_incomplete(recovery_obs, stream, base);
+	boundary_class c;
+	const char * mode;
+	if (over_cap && requested.empty() && primary_ok && recovery_ok)
+	{
+		c = boundary_class::clean_recovery;
+		mode = "gap_cap_next_frame";
+	}
+	else if (recovery_ok)
+	{
+		c = boundary_class::degraded;
+		mode = "unexpected_next_frame";
+	}
+	else
+	{
+		c = boundary_class::hard_failure;
+		mode = "unrecovered";
+	}
+	frame = base + 2;
+	note_boundary(score, "rtx_pressure", missing, stream, c, primary_ok, recovery_ok, true, recovery_obs.feedback.size(), recovery_obs.gaps.size(), requested.size(), mode);
+	return c;
+}
+
+boundary_class boundary_duplicate_density(sender & tx,
+                                          wivrn_connection & connection,
+                                          uint8_t stream,
+                                          uint64_t & frame,
+                                          uint16_t duplicates,
+                                          boundary_score & score)
+{
+	observation obs;
+	const uint64_t base = frame;
+	const uint64_t first_sequence = tx.reserve_sequence(stream);
+	tx.send_explicit_shard(stream, base, 0, first_sequence);
+	for (uint16_t i = 0; i < duplicates; ++i)
+		tx.send_explicit_shard(stream, base, 0, first_sequence);
+	for (uint16_t shard = 1; shard < shards_per_frame; ++shard)
+		tx.send_explicit_shard(stream, base, shard, tx.reserve_sequence(stream));
+	collect(connection, obs, per_scenario_timeout);
+	const bool primary_ok = feedback_success(obs, stream, base);
+	const boundary_class c = primary_ok ? boundary_class::clean_success : boundary_class::hard_failure;
+	++frame;
+	note_boundary(score, "duplicate_density", duplicates, stream, c, primary_ok, primary_ok, true, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), "same_sequence");
+	return c;
+}
+
 } // namespace
 
 int run(wivrn_connection & connection, std::stop_token stop_token)
 {
 	const bool oracle_ok = oracle_self_test();
-	U_LOG_I("HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d", oracle_ok);
+	std::fprintf(stderr, "HELIX_BOUNDARY_ORACLE pass=%d\n", oracle_ok);
+	std::fflush(stderr);
 	if (!oracle_ok)
 		return 2;
-
-	U_LOG_I("Helix synthetic transport: starting bounded Quest receiver battery");
 
 	connection.send_control(to_headset::video_stream_description{
 	        .width = width,
@@ -506,152 +816,90 @@ int run(wivrn_connection & connection, std::stop_token stop_token)
 	std::this_thread::sleep_for(setup_delay);
 
 	sender tx{connection, stop_token};
-	score s;
+	boundary_score score;
 	std::array<uint64_t, 2> frame{};
 
-	// Warm-up establishes independent receiver packet-sequence state for both color streams.
 	for (uint8_t stream = 0; stream < 2; ++stream)
 	{
-		if (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))
-			++s.catastrophic;
-		frame[stream] += 2;
-	}
-
-	// Dominant historical failure class: the entire encoded frame disappears before
-	// Quest wlan0. Exercise a literal 64/64-shard erasure on both production streams.
-	for (uint8_t stream = 0; stream < 2; ++stream)
-	{
-		run_case(tx, connection, s, stream, frame[stream], shards_per_frame, 0, false);
-		frame[stream] += 2;
-	}
-
-	for (const auto & event: recorded_events)
-	{
-		const uint8_t stream = event.stream;
-		const uint16_t missing = std::min<uint16_t>(event.missing, shards_per_frame);
-		const uint16_t start = missing == shards_per_frame
-		                               ? 0
-		                               : uint16_t(1 + (event.id * 7) % (shards_per_frame - missing));
-		U_LOG_I("Helix synthetic recorded event=%u stream=%u missing=%u span_ms=%.3f report_ms=%.3f",
-		        event.id,
-		        stream,
-		        missing,
-		        event.send_span_ms,
-		        event.report_delay_ms);
-		run_case(tx, connection, s, stream, frame[stream], missing, start, true);
-		frame[stream] += 2;
-	}
-
-	for (size_t i = 0; i < random_case_count; ++i)
-	{
-		const uint64_t r = mix64(0x48454c4958ULL + i);
-		const uint8_t stream = uint8_t((r >> 32) & 1);
-		const uint16_t missing = uint16_t(r % 61); // 0..60; keeps at least a few shards in most cases
-		const uint16_t start = missing == 0
-		                               ? 0
-		                               : uint16_t(1 + (r >> 16) % (shards_per_frame - missing));
-		run_case(tx, connection, s, stream, frame[stream], missing, start, false);
-		frame[stream] += 2;
-	}
-
-	// Real receiver loss staircase: every contiguous omission size on both production streams.
-	for (uint16_t missing = 1; missing <= shards_per_frame; ++missing)
-	{
-		for (uint8_t stream = 0; stream < 2; ++stream)
+		observation obs;
+		tx.send_frame(packet_plan{.stream = stream, .frame_idx = frame[stream]});
+		collect(connection, obs, per_scenario_timeout);
+		const bool ok = feedback_success(obs, stream, frame[stream]);
+		note_boundary(score, "baseline", 0, stream, ok ? boundary_class::clean_success : boundary_class::hard_failure, ok, ok, true, obs.feedback.size(), obs.gaps.size(), obs.rtx.size(), "none");
+		++frame[stream];
+		if (!ok)
 		{
-			const uint16_t start = missing == shards_per_frame ? 0 : 1;
-			const bool good = run_case(tx, connection, s, stream, frame[stream], missing, start, false);
-			++s.envelope_total;
-			s.envelope_good += good;
-			frame[stream] += 2;
+			score.terminal = true;
+			std::fprintf(stderr, "HELIX_BOUNDARY_RESULT completed=0 cases=%llu clean_success=%llu clean_recovery=%llu degraded=%llu hard=%llu terminal=1\n", static_cast<unsigned long long>(score.cases), static_cast<unsigned long long>(score.clean_success), static_cast<unsigned long long>(score.clean_recovery), static_cast<unsigned long long>(score.degraded), static_cast<unsigned long long>(score.hard));
+			std::fflush(stderr);
+			return 3;
 		}
 	}
 
-	for (uint8_t stream = 0; stream < 2; ++stream)
-	{
-		bool good = run_duplicate_case(tx, connection, stream, frame[stream]);
-		++s.ordering_total;
-		s.ordering_good += good;
-		frame[stream] += 1;
+	const std::array<uint16_t, 10> loss_levels{0, 1, 2, 4, 8, 16, 24, 32, 48, 64};
+	const std::array<uint16_t, 7> full_run_levels{1, 2, 4, 8, 16, 32, 64};
+	const std::array<uint16_t, 8> reorder_levels{1, 2, 4, 8, 16, 32, 48, 62};
+	const std::array<uint16_t, 11> lateness_levels{0, 1, 2, 5, 10, 20, 40, 80, 160, 320, 640};
+	const std::array<uint16_t, 10> jump_levels{1, 2, 3, 4, 8, 16, 32, 64, 128, 256};
+	const std::array<uint16_t, 8> rtx_levels{1, 2, 4, 8, 9, 12, 16, 24};
+	const std::array<uint16_t, 8> duplicate_levels{0, 1, 2, 4, 8, 16, 32, 64};
 
-		good = run_reorder_case(tx, connection, stream, frame[stream]);
-		++s.ordering_total;
-		s.ordering_good += good;
-		frame[stream] += 1;
+	auto handle_hard = [&](boundary_class c, uint8_t stream, const char * axis) {
+		if (c != boundary_class::hard_failure)
+			return true;
+		if (resync(tx, connection, stream, frame[stream], axis))
+			return true;
+		score.terminal = true;
+		return false;
+	};
 
-		good = run_late_old_case(tx, connection, stream, frame[stream]);
-		++s.ordering_total;
-		s.ordering_good += good;
-		frame[stream] += 2;
+	for (auto level: loss_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_loss_depth(tx, connection, stream, frame[stream], level, score), stream, "loss_depth"))
+				goto done;
 
-		good = run_rtx_rescue_case(tx, connection, stream, frame[stream]);
-		++s.rtx_total;
-		s.rtx_good += good;
-		frame[stream] += 1;
+	for (auto level: full_run_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_full_frame_run(tx, connection, stream, frame[stream], level, score), stream, "full_frame_run"))
+				goto done;
 
-		good = run_frame_jump_case(tx, connection, stream, frame[stream]);
-		++s.ordering_total;
-		s.ordering_good += good;
-		frame[stream] += 4;
-	}
+	for (auto level: reorder_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_reorder_distance(tx, connection, stream, frame[stream], level, score), stream, "reorder_distance"))
+				goto done;
 
-	const double good_ratio = s.total ? double(s.good) / double(s.total) : 0.0;
-	const double fallback_ratio = s.fallback_total ? double(s.fallback_good) / double(s.fallback_total) : 0.0;
-	const double recorded_ratio = s.recorded_total ? double(s.recorded_good) / double(s.recorded_total) : 0.0;
-	const double envelope_ratio = s.envelope_total ? double(s.envelope_good) / double(s.envelope_total) : 0.0;
-	const double ordering_ratio = s.ordering_total ? double(s.ordering_good) / double(s.ordering_total) : 0.0;
-	const double rtx_ratio = s.rtx_total ? double(s.rtx_good) / double(s.rtx_total) : 0.0;
-	const bool pass = good_ratio >= promotion_threshold && fallback_ratio >= promotion_threshold &&
-	                  recorded_ratio >= promotion_threshold && envelope_ratio >= promotion_threshold &&
-	                  ordering_ratio >= promotion_threshold && rtx_ratio >= promotion_threshold &&
-	                  s.catastrophic == 0;
+	for (auto level: lateness_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_lateness_ms(tx, connection, stream, frame[stream], level, score), stream, "lateness_ms"))
+				goto done;
 
-	U_LOG_I("HELIX_SYNTHETIC_TRANSPORT_RESULT pass=%d total=%llu good=%llu good_ratio=%.6f fallback_total=%llu fallback_good=%llu fallback_ratio=%.6f recorded_total=%llu recorded_good=%llu recorded_ratio=%.6f envelope_total=%llu envelope_good=%llu envelope_ratio=%.6f ordering_total=%llu ordering_good=%llu ordering_ratio=%.6f rtx_total=%llu rtx_good=%llu rtx_ratio=%.6f catastrophic=%llu",
-	        pass,
-	        static_cast<unsigned long long>(s.total),
-	        static_cast<unsigned long long>(s.good),
-	        good_ratio,
-	        static_cast<unsigned long long>(s.fallback_total),
-	        static_cast<unsigned long long>(s.fallback_good),
-	        fallback_ratio,
-	        static_cast<unsigned long long>(s.recorded_total),
-	        static_cast<unsigned long long>(s.recorded_good),
-	        recorded_ratio,
-	        static_cast<unsigned long long>(s.envelope_total),
-	        static_cast<unsigned long long>(s.envelope_good),
-	        envelope_ratio,
-	        static_cast<unsigned long long>(s.ordering_total),
-	        static_cast<unsigned long long>(s.ordering_good),
-	        ordering_ratio,
-	        static_cast<unsigned long long>(s.rtx_total),
-	        static_cast<unsigned long long>(s.rtx_good),
-	        rtx_ratio,
-	        static_cast<unsigned long long>(s.catastrophic));
+	for (auto level: jump_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_frame_jump(tx, connection, stream, frame[stream], level, score), stream, "frame_jump"))
+				goto done;
 
+	for (auto level: rtx_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_rtx_pressure(tx, connection, stream, frame[stream], level, score), stream, "rtx_pressure"))
+				goto done;
+
+	for (auto level: duplicate_levels)
+		for (uint8_t stream = 0; stream < 2; ++stream)
+			if (!handle_hard(boundary_duplicate_density(tx, connection, stream, frame[stream], level, score), stream, "duplicate_density"))
+				goto done;
+
+done:
 	std::fprintf(stderr,
-	             "HELIX_SYNTHETIC_TRANSPORT_RESULT pass=%d total=%llu good=%llu good_ratio=%.6f fallback_total=%llu fallback_good=%llu fallback_ratio=%.6f recorded_total=%llu recorded_good=%llu recorded_ratio=%.6f envelope_total=%llu envelope_good=%llu envelope_ratio=%.6f ordering_total=%llu ordering_good=%llu ordering_ratio=%.6f rtx_total=%llu rtx_good=%llu rtx_ratio=%.6f catastrophic=%llu\n",
-	             pass,
-	             static_cast<unsigned long long>(s.total),
-	             static_cast<unsigned long long>(s.good),
-	             good_ratio,
-	             static_cast<unsigned long long>(s.fallback_total),
-	             static_cast<unsigned long long>(s.fallback_good),
-	             fallback_ratio,
-	             static_cast<unsigned long long>(s.recorded_total),
-	             static_cast<unsigned long long>(s.recorded_good),
-	             recorded_ratio,
-	             static_cast<unsigned long long>(s.envelope_total),
-	             static_cast<unsigned long long>(s.envelope_good),
-	             envelope_ratio,
-	             static_cast<unsigned long long>(s.ordering_total),
-	             static_cast<unsigned long long>(s.ordering_good),
-	             ordering_ratio,
-	             static_cast<unsigned long long>(s.rtx_total),
-	             static_cast<unsigned long long>(s.rtx_good),
-	             rtx_ratio,
-	             static_cast<unsigned long long>(s.catastrophic));
+	             "HELIX_BOUNDARY_RESULT completed=%d cases=%llu clean_success=%llu clean_recovery=%llu degraded=%llu hard=%llu terminal=%d\n",
+	             score.terminal ? 0 : 1,
+	             static_cast<unsigned long long>(score.cases),
+	             static_cast<unsigned long long>(score.clean_success),
+	             static_cast<unsigned long long>(score.clean_recovery),
+	             static_cast<unsigned long long>(score.degraded),
+	             static_cast<unsigned long long>(score.hard),
+	             score.terminal ? 1 : 0);
 	std::fflush(stderr);
-
-	return pass ? 0 : 1;
+	return score.terminal ? 3 : 0;
 }
+
 } // namespace wivrn::helix_synthetic_transport

@@ -3,8 +3,9 @@ diff --git a/server/encoder/video_encoder.h b/server/encoder/video_encoder.h
 +++ b/server/encoder/video_encoder.h
 @@
 -	void on_feedback(const from_headset::feedback &);
+-	void reset();
 +	virtual void on_feedback(const from_headset::feedback &);
- 	void reset();
++	virtual void reset();
  
  	// bitrate_bps is the bitrate for the whole stream
 diff --git a/server/encoder/video_encoder_nvenc.h b/server/encoder/video_encoder_nvenc.h
@@ -32,6 +33,7 @@ diff --git a/server/encoder/video_encoder_nvenc.h b/server/encoder/video_encoder
 +	std::atomic<uint64_t> helix_last_submitted_frame{0};
 +	uint64_t helix_invalidation_queued = 0;
 +	uint64_t helix_invalidation_applied = 0;
++	uint64_t helix_invalidation_nonref_skipped = 0;
 +	uint64_t helix_invalidation_duplicates = 0;
 +	uint64_t helix_invalidation_overflow = 0;
 +	uint64_t helix_invalidation_stale = 0;
@@ -47,6 +49,7 @@ diff --git a/server/encoder/video_encoder_nvenc.h b/server/encoder/video_encoder
  	void present_image(vk::Image y_cbcr, vk::SemaphoreSubmitInfo info, uint8_t slot, uint64_t frame_index) override;
  	std::optional<data> encode(uint8_t slot, uint64_t frame_index) override;
 +	void on_feedback(const from_headset::feedback &) override;
++	void reset() override;
  
  	static std::array<int, 2> get_max_size(video_codec);
  };
@@ -63,26 +66,40 @@ diff --git a/server/encoder/video_encoder_nvenc.cpp b/server/encoder/video_encod
 +void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
 +{
 +	auto & idr_handler = static_cast<default_idr_handler &>(*idr);
-+	if (!feedback.sent_to_decoder && !idr_handler.is_non_ref_frame(feedback.frame_index))
++	if (!feedback.sent_to_decoder)
 +	{
-+		std::scoped_lock lock(helix_invalidation_mutex);
-+		if (std::ranges::contains(helix_pending_invalidations, feedback.frame_index))
++		if (idr_handler.is_non_ref_frame(feedback.frame_index))
 +		{
-+			++helix_invalidation_duplicates;
++			std::scoped_lock lock(helix_invalidation_mutex);
++			++helix_invalidation_nonref_skipped;
 +		}
 +		else
 +		{
-+			if (helix_pending_invalidations.size() == helix_invalidation_queue_limit)
++			std::scoped_lock lock(helix_invalidation_mutex);
++			if (std::ranges::contains(helix_pending_invalidations, feedback.frame_index))
 +			{
-+				helix_pending_invalidations.pop_front();
-+				++helix_invalidation_overflow;
++				++helix_invalidation_duplicates;
 +			}
-+			helix_pending_invalidations.push_back(feedback.frame_index);
-+			++helix_invalidation_queued;
++			else
++			{
++				if (helix_pending_invalidations.size() == helix_invalidation_queue_limit)
++				{
++					helix_pending_invalidations.pop_front();
++					++helix_invalidation_overflow;
++				}
++				helix_pending_invalidations.push_back(feedback.frame_index);
++				++helix_invalidation_queued;
++			}
 +		}
 +	}
 +
 +	video_encoder::on_feedback(feedback);
++}
++
++void video_encoder_nvenc::reset()
++{
++	helix_clear_reference_invalidations();
++	video_encoder::reset();
 +}
 +
 +void video_encoder_nvenc::helix_clear_reference_invalidations()
@@ -134,10 +151,11 @@ diff --git a/server/encoder/video_encoder_nvenc.cpp b/server/encoder/video_encod
 +		std::scoped_lock lock(helix_invalidation_mutex);
 +		pending_invalidations = helix_pending_invalidations.size();
 +	}
-+	U_LOG_I("Helix NVENC invalidation summary stream=%u queued=%llu applied=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu pending=%zu",
++	U_LOG_I("Helix NVENC invalidation summary stream=%u queued=%llu applied=%llu nonref_skipped=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu pending=%zu",
 +	        stream_idx,
 +	        static_cast<unsigned long long>(helix_invalidation_queued),
 +	        static_cast<unsigned long long>(helix_invalidation_applied),
++	        static_cast<unsigned long long>(helix_invalidation_nonref_skipped),
 +	        static_cast<unsigned long long>(helix_invalidation_duplicates),
 +	        static_cast<unsigned long long>(helix_invalidation_overflow),
 +	        static_cast<unsigned long long>(helix_invalidation_stale),

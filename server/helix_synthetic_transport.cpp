@@ -271,10 +271,35 @@ bool oracle_self_test()
 	        .exposing_frame_idx = 9,
 	});
 
-	const bool accepts_expected = feedback_success(obs, 0, 7) && feedback_incomplete(obs, 1, 9) && gap_covers(obs, 1, 101, 3);
-	const bool rejects_mutations = !feedback_success(obs, 1, 7) && !feedback_success(obs, 1, 9) &&
-	                               !feedback_incomplete(obs, 0, 7) && !gap_covers(obs, 0, 101, 3) &&
-	                               !gap_covers(obs, 1, 99, 6) && !gap_covers(obs, 1, 104, 2);
+	const bool accept_complete = feedback_success(obs, 0, 7);
+	const bool accept_incomplete = feedback_incomplete(obs, 1, 9);
+	const bool accept_gap_subset = gap_covers(obs, 1, 101, 3);
+	const bool reject_wrong_stream_feedback = !feedback_success(obs, 1, 7);
+	const bool reject_incomplete_as_success = !feedback_success(obs, 1, 9);
+	const bool reject_complete_as_incomplete = !feedback_incomplete(obs, 0, 7);
+	const bool reject_wrong_stream_gap = !gap_covers(obs, 0, 101, 3);
+	const bool reject_gap_before_start = !gap_covers(obs, 1, 99, 6);
+	const bool reject_gap_past_end = !gap_covers(obs, 1, 104, 2);
+
+	const bool accepts_expected = accept_complete && accept_incomplete && accept_gap_subset;
+	const bool rejects_mutations = reject_wrong_stream_feedback && reject_incomplete_as_success &&
+	                               reject_complete_as_incomplete && reject_wrong_stream_gap &&
+	                               reject_gap_before_start && reject_gap_past_end;
+
+	std::fprintf(stderr,
+	             "HELIX_SYNTHETIC_TRANSPORT_ORACLE_DETAIL accept_complete=%d accept_incomplete=%d accept_gap_subset=%d reject_wrong_stream_feedback=%d reject_incomplete_as_success=%d reject_complete_as_incomplete=%d reject_wrong_stream_gap=%d reject_gap_before_start=%d reject_gap_past_end=%d accepts_expected=%d rejects_mutations=%d\n",
+	             accept_complete,
+	             accept_incomplete,
+	             accept_gap_subset,
+	             reject_wrong_stream_feedback,
+	             reject_incomplete_as_success,
+	             reject_complete_as_incomplete,
+	             reject_wrong_stream_gap,
+	             reject_gap_before_start,
+	             reject_gap_past_end,
+	             accepts_expected,
+	             rejects_mutations);
+	std::fflush(stderr);
 	return accepts_expected && rejects_mutations;
 }
 

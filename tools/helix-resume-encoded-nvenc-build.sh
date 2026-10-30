@@ -44,11 +44,24 @@ c=c.replace('#include <thread>\n', '#include <thread>\n#include <type_traits>\n'
 c=c.replace('std::vector<XrExtensionProperties> exts(ext_count, {XR_TYPE_EXTENSION_PROPERTIES});', 'std::vector<XrExtensionProperties> exts(ext_count);\n    for (auto & ext : exts) ext.type = XR_TYPE_EXTENSION_PROPERTIES;')
 c=c.replace('std::strncpy(ici.applicationInfo.applicationName, "Helix Headless Driver", XR_MAX_APPLICATION_NAME_SIZE - 1);', 'std::snprintf(ici.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE, "%s", "Helix Headless Driver");')
 c=c.replace('std::strncpy(ici.applicationInfo.engineName, "Helix", XR_MAX_ENGINE_NAME_SIZE - 1);', 'std::snprintf(ici.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "%s", "Helix");')
+# OpenXR headers intentionally use C aggregate structs. Under -Werror,
+# Type var{XR_TYPE_*} triggers -Wmissing-field-initializers in C++.
+# Zero-initialize the whole struct and assign .type explicitly instead.
+pat=re.compile(r'(?m)^(\s*)(Xr[A-Za-z0-9_]+)\s+([A-Za-z_][A-Za-z0-9_]*)\{(XR_TYPE_[A-Z0-9_]+)\};$')
+def repl(m):
+    indent, typ, var, xrtype = m.groups()
+    return f'{indent}{typ} {var}{{}};\n{indent}{var}.type = {xrtype};'
+c,n=pat.subn(repl,c)
+if n < 8:
+    raise SystemExit(f'error: expected to rewrite OpenXR aggregate initializers, got {n}')
+if re.search(r'Xr[A-Za-z0-9_]+\s+[A-Za-z_][A-Za-z0-9_]*\{XR_TYPE_[A-Z0-9_]+\};', c):
+    raise SystemExit('error: stale OpenXR aggregate initializer remains')
 Path(sys.argv[2]).write_text(c)
 PY
 hdr=""; for root in /usr/include build-everything .; do [[ -e "$root" ]] || continue; hdr="$(find "$root" -type f -path '*/openxr/openxr.h' -print -quit 2>/dev/null || true)"; [[ -n "$hdr" ]] && break; done
 [[ -n "$hdr" ]]; inc="$(dirname "$(dirname "$hdr")")"
 c++ -std=c++20 -O2 -Wall -Wextra -Werror -I"$inc" "$out/helix_headless_driver.cpp" -ldl -o "$out/helix-headless-driver"
+[[ -x "$out/helix-headless-driver" ]]
 
 echo '[4/5] Publishing exact already-compiled source commit'
 remote="$(git ls-remote origin "refs/heads/$branch" | awk '{print $1}')"
@@ -68,4 +81,4 @@ headless_driver=$out/helix-headless-driver
 provenance=PASS direct-executable-build-graph
 artifact_gate=PASS salvaged-existing-desktop-plus-apk-headless
 EOF
-printf '\nPASS: verifier-only failure salvaged; exact compiled source published and missing artifacts built.\ncommit=%s\nbranch=%s\napk=%s\nheadless_driver=%s\nevidence=%s\nSTATUS: built only; not installed and encoded runtime not executed.\n' "$head" "$branch" "$apk" "$out/helix-headless-driver" "$out"
+printf '\nPASS: verifier/headless harness failure classes closed; exact compiled source published and missing artifacts built.\ncommit=%s\nbranch=%s\napk=%s\nheadless_driver=%s\nevidence=%s\nSTATUS: built only; not installed and encoded runtime not executed.\n' "$head" "$branch" "$apk" "$out/helix-headless-driver" "$out"

@@ -18,6 +18,7 @@ for f in "$BASE" "$SRC" "$BIN" "$META" "$SEAL"; do [[ -s "$f" ]] || fail "missin
 grep -Fqx "source_sha256=$SRC_SHA" "$SEAL" || fail "seal source"
 grep -Fqx "binary_sha256=$BIN_SHA" "$SEAL" || fail "seal binary"
 grep -Fqx "metadata_sha256=$META_SHA" "$SEAL" || fail "seal metadata"
+grep -Fqx 'build_tooling_commit=0b4ba80f4ad912aba7000c581ac5b4f8e621956d' "$SEAL" || fail "seal build tooling"
 grep -Fqx 'render_deadline_seconds=1080' "$SEAL" || fail "seal deadline"
 cp "$BASE" "$OUT"
 python3 - "$OUT" "$SRC_SHA" "$BIN_SHA" "$META_SHA" <<'PY'
@@ -31,8 +32,8 @@ def one(x,y):
     s=s.replace(x,y,1)
 def exact(x,y,n):
     global s
-    c=s.count(x)
-    if c!=n: raise SystemExit(f'FAIL anchor {x!r} count={c} expected={n}')
+    count=s.count(x)
+    if count!=n: raise SystemExit(f'FAIL anchor {x!r} count={count} expected={n}')
     s=s.replace(x,y)
 one('HELIX_SUSTAINED_FRAMES:-27000','HELIX_SUSTAINED_FRAMES:-81000')
 one('HELIX_ENCODED_TORTURE_CYCLES:-30','HELIX_ENCODED_TORTURE_CYCLES:-90')
@@ -43,6 +44,7 @@ one('helix-vulkan-stimulus-sustained-v1','helix-vulkan-stimulus-sustained-15min-
 s=re.sub(r'VULKAN_SOURCE_SHA256="[0-9a-f]{64}"',f'VULKAN_SOURCE_SHA256="{a}"',s,count=1)
 s=re.sub(r'VULKAN_BINARY_SHA256="[0-9a-f]{64}"',f'VULKAN_BINARY_SHA256="{b}"',s,count=1)
 s=re.sub(r'VULKAN_METADATA_SHA256="[0-9a-f]{64}"',f'VULKAN_METADATA_SHA256="{c}"',s,count=1)
+one('build_tooling_commit=e5c77bc488ebc4eb3d8c03e66511cd1c60daa271','build_tooling_commit=0b4ba80f4ad912aba7000c581ac5b4f8e621956d')
 exact('render_deadline_seconds=360','render_deadline_seconds=1080',2)
 one('sustained-v1-frozen-v5-single-deadline-delta-source-binary-metadata-deps','sustained-15min-v1-frozen-5min-single-deadline-delta-source-binary-metadata-deps')
 one('graphics-bound-vulkan-event-pumped-render-counted-entropy8-sustained360','graphics-bound-vulkan-event-pumped-render-counted-entropy8-sustained1080')
@@ -55,4 +57,6 @@ p.write_text(s)
 PY
 chmod +x "$OUT"
 bash -n "$OUT" || fail "runner syntax"
+grep -Fqx 'grep -Fqx '\''build_tooling_commit=0b4ba80f4ad912aba7000c581ac5b4f8e621956d'\'' "$SEAL" || fail "sustained Vulkan build tooling mismatch"' "$OUT" || fail "runner 15-minute build tooling binding missing"
+! grep -Fq 'build_tooling_commit=e5c77bc488ebc4eb3d8c03e66511cd1c60daa271' "$OUT" || fail "stale 5-minute build tooling binding remains"
 printf 'PASS: 15-minute runner materialized\nrunner=%s\nframes=81000\ncycles=90\nspacing=300\nexpected=270\n' "$OUT"

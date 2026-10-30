@@ -20,6 +20,9 @@ git cat-file -e "${BASE}^{commit}" 2>/dev/null || git fetch origin "$BASE"
 git cat-file -e "${TRANSFORM_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$TRANSFORM_COMMIT"
 [[ "$(git rev-parse "$BASE")" == "$BASE" ]] || fail "base commit unavailable"
 
+remote_expected="$(git ls-remote origin "refs/heads/$OUT_BRANCH" | awk '{print $1}')"
+[[ -n "$remote_expected" ]] || fail "remote diagnostic branch missing"
+
 stamp="$(date +%Y%m%d-%H%M%S)"
 out="$HOME/helix-synthetic-oracle-diag-build-$stamp"
 worktree="$out/worktree"
@@ -55,7 +58,7 @@ server="$(realpath build-server/server/wivrn-server)"
 [[ -x "$server" && -s "$server" ]] || fail "diagnostic server missing"
 server_sha="$(sha256sum "$server" | awk '{print $1}')"
 
-git push --force-with-lease origin "HEAD:$OUT_BRANCH" 2>&1 | tee "$out/push.txt"
+git push --force-with-lease="refs/heads/$OUT_BRANCH:$remote_expected" origin "HEAD:$OUT_BRANCH" 2>&1 | tee "$out/push.txt"
 remote_head="$(git ls-remote origin "refs/heads/$OUT_BRANCH" | awk '{print $1}')"
 [[ "$remote_head" == "$source_commit" ]] || fail "remote diagnostic branch mismatch"
 
@@ -63,6 +66,7 @@ cat > "$out/metadata.txt" <<EOF
 base=$BASE
 transform_commit=$TRANSFORM_COMMIT
 source_commit=$source_commit
+remote_expected=$remote_expected
 remote_head=$remote_head
 server=$server
 server_sha256=$server_sha

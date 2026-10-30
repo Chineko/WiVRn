@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import hashlib
 import pathlib
 import subprocess
 import sys
@@ -188,21 +187,30 @@ def main() -> int:
         "server/encoder/video_encoder_nvenc.h": transform_nvenc_h,
         "server/encoder/video_encoder_nvenc.cpp": transform_nvenc_cpp,
     }
+    originals: dict[str, str] = {}
+    transformed: dict[str, str] = {}
     for rel, transform in transforms.items():
-        path = ROOT / rel
-        before = path.read_text()
+        before = (ROOT / rel).read_text()
         after = transform(before)
         if after == before:
             raise RuntimeError(f"{rel}: transformation produced no change")
-        path.write_text(after)
+        originals[rel] = before
+        transformed[rel] = after
 
-    subprocess.check_call(["git", "diff", "--check"], cwd=ROOT)
-    changed = run("git", "diff", "--name-only").splitlines()
-    expected_paths = list(transforms)
-    if changed != expected_paths:
-        raise RuntimeError(f"unexpected changed paths: {changed!r}")
+    try:
+        for rel, after in transformed.items():
+            (ROOT / rel).write_text(after)
+        subprocess.check_call(["git", "diff", "--check"], cwd=ROOT)
+        changed = run("git", "diff", "--name-only").splitlines()
+        if set(changed) != set(transforms) or len(changed) != len(transforms):
+            raise RuntimeError(f"unexpected changed paths: {changed!r}")
+    except Exception:
+        for rel, before in originals.items():
+            (ROOT / rel).write_text(before)
+        raise
+
     print("PASS: bounded NVENC reference invalidation source transformation applied")
-    for rel in changed:
+    for rel in sorted(changed):
         print(f"  {rel}")
     print("STATUS: source modified only; not built, installed, or runtime-tested")
     return 0

@@ -46,13 +46,19 @@ def main() -> int:
     )
     updated[path] = replace_once(
         updated[path],
+        "#include <CLI/CLI.hpp>\n#include <avahi-glib/glib-watch.h>",
+        "#include <CLI/CLI.hpp>\n#include <avahi-glib/glib-watch.h>\n#include <atomic>",
+        path,
+    )
+    updated[path] = replace_once(
+        updated[path],
         "std::optional<std::jthread> connection_thread;\n\nstd::unique_ptr<children_manager> children;",
-        "std::optional<std::jthread> connection_thread;\nstd::optional<std::jthread> helix_synthetic_thread;\nbool helix_synthetic_transport_enabled = false;\n\nstd::unique_ptr<children_manager> children;",
+        "std::optional<std::jthread> connection_thread;\nstd::optional<std::jthread> helix_synthetic_thread;\nbool helix_synthetic_transport_enabled = false;\nstd::atomic<int> helix_synthetic_result{-1};\n\nstd::unique_ptr<children_manager> children;",
         path,
     )
 
     old_success = '''\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tdelay_next_try = default_delay_next_try;\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;'''
-    new_success = '''\tdelay_next_try = default_delay_next_try;\n\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tstd::cerr << "Helix synthetic transport mode: starting bounded receiver battery" << std::endl;\n\t\thelix_synthetic_thread.emplace([](std::stop_token stop_token) {\n\t\t\tint result = 1;\n\t\t\ttry\n\t\t\t{\n\t\t\t\tresult = wivrn::helix_synthetic_transport::run(*connection, stop_token);\n\t\t\t}\n\t\t\tcatch (const std::exception & e)\n\t\t\t{\n\t\t\t\tstd::cerr << "Helix synthetic transport failed: " << e.what() << std::endl;\n\t\t\t}\n\n\t\t\tauto * result_ptr = new int(result);\n\t\t\tg_main_context_invoke(nullptr, [](void * data) -> gboolean {\n\t\t\t\tconst int result = *static_cast<int *>(data);\n\t\t\t\tdelete static_cast<int *>(data);\n\t\t\t\tstd::cerr << "HELIX_SYNTHETIC_TRANSPORT_EXIT result=" << result << std::endl;\n\t\t\t\thelix_synthetic_thread.reset();\n\t\t\t\tconnection.reset();\n\t\t\t\tquitting_main_loop = true;\n\t\t\t\tg_main_loop_quit(main_loop);\n\t\t\t\treturn G_SOURCE_REMOVE;\n\t\t\t}, result_ptr);\n\t\t});\n\t\treturn G_SOURCE_REMOVE;\n\t}\n\n\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;'''
+    new_success = '''\tdelay_next_try = default_delay_next_try;\n\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tstd::cerr << "Helix synthetic transport mode: starting bounded receiver battery" << std::endl;\n\t\thelix_synthetic_thread.emplace([](std::stop_token stop_token) {\n\t\t\tint result = 1;\n\t\t\ttry\n\t\t\t{\n\t\t\t\tresult = wivrn::helix_synthetic_transport::run(*connection, stop_token);\n\t\t\t}\n\t\t\tcatch (const std::exception & e)\n\t\t\t{\n\t\t\t\tstd::cerr << "Helix synthetic transport failed: " << e.what() << std::endl;\n\t\t\t}\n\n\t\t\thelix_synthetic_result.store(result, std::memory_order_release);\n\t\t\tg_main_context_invoke(nullptr, [](void *) -> gboolean {\n\t\t\t\tconst int result = helix_synthetic_result.load(std::memory_order_acquire);\n\t\t\t\tstd::cerr << "HELIX_SYNTHETIC_TRANSPORT_EXIT result=" << result << std::endl;\n\t\t\t\tquitting_main_loop = true;\n\t\t\t\tg_main_loop_quit(main_loop);\n\t\t\t\treturn G_SOURCE_REMOVE;\n\t\t\t}, nullptr);\n\t\t});\n\t\treturn G_SOURCE_REMOVE;\n\t}\n\n\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;'''
     updated[path] = replace_once(updated[path], old_success, new_success, path)
 
     updated[path] = replace_once(
@@ -67,6 +73,18 @@ def main() -> int:
         "\tdo_fork = not *no_fork;\n\thelix_synthetic_transport_enabled = bool(*helix_synthetic_transport);\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tif (*early_active_runtime)\n\t\t{\n\t\t\tstd::cerr << \"--helix-synthetic-transport is incompatible with --early-active-runtime\" << std::endl;\n\t\t\treturn 2;\n\t\t}\n\t\tdo_active_runtime = false;\n\t\tdo_fork = false;\n\t}\n\tif (*no_encrypt)",
         path,
     )
+    updated[path] = replace_once(
+        updated[path],
+        "\t// Cleanup\n\tnotify_uninit();",
+        "\t// Cleanup. Join the bounded synthetic worker before releasing its connection.\n\tif (helix_synthetic_thread)\n\t{\n\t\thelix_synthetic_thread->request_stop();\n\t\thelix_synthetic_thread.reset();\n\t}\n\tif (helix_synthetic_transport_enabled)\n\t\tconnection.reset();\n\n\tnotify_uninit();",
+        path,
+    )
+    updated[path] = replace_once(
+        updated[path],
+        "\treturn wivrn_exit_code::success;\n}\n\nint main(int argc, char * argv[])",
+        "\tif (helix_synthetic_transport_enabled)\n\t\treturn helix_synthetic_result.load(std::memory_order_acquire) == 0\n\t\t               ? int(wivrn_exit_code::success)\n\t\t               : int(wivrn_exit_code::unknown_error);\n\n\treturn wivrn_exit_code::success;\n}\n\nint main(int argc, char * argv[])",
+        path,
+    )
 
     for path, text in updated.items():
         Path(path).write_text(text)
@@ -76,14 +94,20 @@ def main() -> int:
         changed = set(subprocess.check_output(["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True).splitlines())
         if changed != set(EXPECTED):
             raise RuntimeError(f"unexpected changed paths: {sorted(changed)}")
-        for marker in (
-            "helix_synthetic_transport.cpp",
-            "--helix-synthetic-transport",
-            "helix_synthetic_transport::run",
-            "HELIX_SYNTHETIC_TRANSPORT_EXIT",
-        ):
-            if marker not in updated["server/main.cpp"] and marker not in updated["server/CMakeLists.txt"]:
-                raise RuntimeError(f"required marker missing: {marker}")
+        markers = {
+            "server/CMakeLists.txt": ("helix_synthetic_transport.cpp",),
+            "server/main.cpp": (
+                "--helix-synthetic-transport",
+                "helix_synthetic_transport::run",
+                "HELIX_SYNTHETIC_TRANSPORT_EXIT",
+                "helix_synthetic_thread->request_stop()",
+                "helix_synthetic_result.store",
+            ),
+        }
+        for marker_path, required in markers.items():
+            for marker in required:
+                if marker not in updated[marker_path]:
+                    raise RuntimeError(f"required marker missing from {marker_path}: {marker}")
     except Exception:
         for path, text in originals.items():
             Path(path).write_text(text)

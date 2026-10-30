@@ -69,6 +69,13 @@ if len(matches) != 1:
 m=matches[0]
 s=s[:m.start()] + 'DRIVER=' + shlex.quote(bin_path) + s[m.end():]
 
+# Quest power telemetry is not a reliable readiness oracle. Wake best-effort,
+# preserve the reported state, and let the real trusted Client-connected gate
+# decide whether the headset is actually usable.
+awake_old='''SCREEN="$(adb -s "$SERIAL" shell dumpsys power 2>/dev/null | tr -d '\\r' | grep -E 'mWakefulness=|Display Power:' || true)"\necho "$SCREEN" >"$OUT/preflight.txt"\ngrep -Eq 'Awake|state=ON' "$OUT/preflight.txt" || fail "Quest is not awake; wear it and keep display on"\n'''
+awake_new='''adb -s "$SERIAL" shell input keyevent 224 >/dev/null 2>&1 || true\nsleep .5\nSCREEN="$(adb -s "$SERIAL" shell dumpsys power 2>/dev/null | tr -d '\\r' | grep -E 'mWakefulness=|Display Power:' || true)"\nprintf 'quest_power_probe=%s\\n' "$SCREEN" >"$OUT/preflight.txt"\necho 'Quest readiness will be proven by trusted Client connected after launch' >>"$OUT/preflight.txt"\n'''
+once(awake_old,awake_new,'Quest awake preflight')
+
 completion='''grep -Fq 'HELIX_VULKAN_DONE frames=220' "$OUT/vulkan.txt" || fail "Vulkan stimulus did not complete 220 frames"\n'''
 completion_new=completion+'''grep -Fq 'HELIX_VULKAN_ENTROPY patterns=8' "$OUT/vulkan.txt" || fail "Vulkan entropy stimulus contract did not execute"\ngrep -Eq 'HELIX_VULKAN_PROGRESS frames=[0-9]+ attempts=[0-9]+ shouldRender=1 state=[0-9]+' "$OUT/vulkan.txt" || fail "v5 render-counted stimulus never produced a renderable frame"\nprintf 'stimulus_seal=%s\\nstimulus_source_sha256=%s\\nstimulus_binary_sha256=%s\\nstimulus_metadata_sha256=%s\\n' '''+repr(seal)+''' '''+repr(src_sha)+''' '''+repr(bin_sha)+''' '''+repr(meta_sha)+''' >>"$OUT/metadata.txt"\n'''
 once(completion,completion_new,'Vulkan completion')
@@ -90,6 +97,7 @@ unexpected_new="if any(x.get('stream')=='0' and x.get('frame')==frame for x in i
 once(unexpected_old,unexpected_new,'unexpected invalidation reducer')
 
 required=[
+ 'Quest readiness will be proven by trusted Client connected after launch',
  'HELIX_VULKAN_ENTROPY patterns=8',
  'HELIX_VULKAN_DONE frames=220',
  'v5 render-counted stimulus never produced a renderable frame',
@@ -101,13 +109,15 @@ required=[
 ]
 for x in required:
     if x not in s: raise SystemExit('FAIL: final runtime requirement missing: '+x)
-for x in ['XR_MND_headless','HELIX_HEADLESS_DONE','$OUT/headless.txt','print $(i+1); exit']:
+for x in ['Quest is not awake; wear it and keep display on','XR_MND_headless','HELIX_HEADLESS_DONE','$OUT/headless.txt','print $(i+1); exit']:
     if x in s: raise SystemExit('FAIL: stale final runtime pattern remains: '+x)
 p.write_text(s)
 PY
 
 bash -n "$EMITTED"
 grep -Fq "DRIVER='$BIN'" "$EMITTED" || grep -Fq "DRIVER=$BIN" "$EMITTED" || fail "final runtime not bound to sealed v5 binary"
+grep -Fq 'Quest readiness will be proven by trusted Client connected after launch' "$EMITTED"
+! grep -Fq 'Quest is not awake; wear it and keep display on' "$EMITTED"
 grep -Fq 'HELIX_VULKAN_ENTROPY patterns=8' "$EMITTED"
 grep -Fq 'HELIX_VULKAN_DONE frames=220' "$EMITTED"
 grep -Fq 'v5 render-counted stimulus never produced a renderable frame' "$EMITTED"

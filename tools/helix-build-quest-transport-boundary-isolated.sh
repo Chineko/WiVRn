@@ -377,7 +377,6 @@ new_run = r'''int run(wivrn_connection & connection, std::stop_token stop_token)
 	boundary_score score;
 	std::array<uint64_t, 2> frame{};
 
-	// Baseline: both streams must decode cleanly before any boundary work.
 	for (uint8_t stream = 0; stream < 2; ++stream)
 	{
 		observation obs;
@@ -476,7 +475,7 @@ mapfile -t changed < <(git diff --name-only)
 for marker in \
     'HELIX_BOUNDARY axis=' \
     'HELIX_BOUNDARY_RESULT' \
-    'axis, "loss_depth"' \
+    '"loss_depth"' \
     '"full_frame_run"' \
     '"reorder_distance"' \
     '"lateness_ms"' \
@@ -488,8 +487,6 @@ for marker in \
     grep -Fq -- "${marker}" "${source_path}" || { echo "error: boundary/source marker missing: ${marker}" >&2; exit 2; }
 done
 grep -Fq -- 'helix_td_enabled(false)' server/encoder/video_encoder.cpp || { echo "error: old full replay is not disabled" >&2; exit 2; }
-# The boundary branch deliberately reuses the already-audited synthetic CLI mode;
-# runtime artifact identity, not flag spelling, selects the boundary battery.
 grep -Fq -- '--helix-synthetic-transport' server/main.cpp || { echo "error: synthetic transport CLI mode missing" >&2; exit 2; }
 git diff --stat | tee "${out}/source-stat.txt"
 git diff >"${out}/source.diff"

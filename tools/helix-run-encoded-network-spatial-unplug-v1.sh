@@ -31,50 +31,56 @@ anchor='bash -n "$PATCHED"\n'
 if s.count(anchor) != 1:
     raise SystemExit('FAIL: promotion PATCHED syntax-check anchor count='+str(s.count(anchor)))
 
+# PATCHED is the exact proven v3 launcher after only promotion identity rebinding.
+# Modify its existing reducer injection so the additional code executes inside
+# fix-v2 PY2, where `s` is the fully emitted final runtime script.
 block=r'''python3 - "$PATCHED" "$START_DELAY" <<'PY_SPATIAL'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); delay=int(sys.argv[2]); s=p.read_text()
-anchor="s=s.replace(anchor, inject+anchor, 1)\n"
-if s.count(anchor) != 1:
-    raise SystemExit('FAIL: v3 final-runtime injection anchor count='+str(s.count(anchor)))
-pause_old="echo '[4/8] Driving 220 graphics-bound Vulkan/OpenXR frames through NVENC'\n"
-pause_new=(
-    "echo 'SPATIAL_UNPLUG_GATE=READY trusted-quest-connected network-path-proven unplug-usb-now'\n"
-    "echo 'UNPLUG USB NOW - WiVRn is connected over WLAN; move to the VR space'\n"
-    + f"echo 'SPATIAL_START_DELAY seconds={delay}'\n"
-    + f"for ((remaining={delay}; remaining>0; remaining--)); do\n"
-    + "  printf '\\rNVENC spatial workload starts in %2d s ' \"$remaining\"\n"
-    + "  sleep 1\n"
-    + "done\n"
-    + "printf '\\rNVENC spatial workload starts now      \\n'\n"
-    + pause_old
-)
-addition=(
-    "pause_old=" + repr(pause_old) + "\n"
-    "pause_new=" + repr(pause_new) + "\n"
+old="s=s.replace(anchor, inject+anchor, 1)\n"
+if s.count(old) != 1:
+    raise SystemExit('FAIL: v3 reducer insertion anchor count='+str(s.count(old)))
+
+pause_code = (
+    "pause_old=\"echo '[4/8] Driving 220 graphics-bound Vulkan/OpenXR frames through NVENC'\\n\"\n"
+    "pause_new=(\n"
+    "    \"echo 'SPATIAL_UNPLUG_GATE=READY trusted-quest-connected network-path-proven unplug-usb-now'\\n\"\n"
+    "    \"echo 'UNPLUG USB NOW - WiVRn is connected over WLAN; move to the VR space'\\n\"\n"
+    + f"    \"echo 'SPATIAL_START_DELAY seconds={delay}'\\n\"\n"
+    + f"    \"for ((remaining={delay}; remaining>0; remaining--)); do\\n\"\n"
+    "    \"  printf '\\\\rNVENC spatial workload starts in %2d s ' \\\"$remaining\\\"\\n\"\n"
+    "    \"  sleep 1\\n\"\n"
+    "    \"done\\n\"\n"
+    "    \"printf '\\\\rNVENC spatial workload starts now      \\\\n'\\n\"\n"
+    "    + pause_old\n"
+    ")\n"
     "if s.count(pause_old) != 1:\n"
     "    raise SystemExit('FAIL: final runtime stimulus anchor count='+str(s.count(pause_old)))\n"
     "s=s.replace(pause_old,pause_new,1)\n\n"
 )
-s=s.replace(anchor, addition+anchor, 1)
+new=(
+    "pause_inject=" + repr(pause_code) + "\n"
+    "s=s.replace(anchor, inject+pause_inject+anchor, 1)\n"
+)
+s=s.replace(old,new,1)
 p.write_text(s)
 PY_SPATIAL
 
-grep -Fq 'SPATIAL_UNPLUG_GATE=READY trusted-quest-connected network-path-proven unplug-usb-now' "$PATCHED" || fail "spatial unplug transform marker missing"
-grep -Fq 'final runtime stimulus anchor count=' "$PATCHED" || fail "spatial final-runtime anchor guard missing"
+grep -Fq 'pause_inject=' "$PATCHED" || fail "spatial final-runtime injection missing"
+grep -Fq 'inject+pause_inject+anchor' "$PATCHED" || fail "spatial reducer-layer composition missing"
 
 '''
 patched=s.replace(anchor, block+anchor, 1)
 runner.write_text(patched)
 normalized=patched.replace(block+anchor, anchor, 1)
 if normalized != original:
-    raise SystemExit('FAIL: spatial wrapper differs from pinned network runner beyond approved orchestration insertion')
-print('SPATIAL_WRAPPER_COMPOSITION_AUDIT=PASS pinned-network-runner-plus-single-final-runtime-pause-transform')
+    raise SystemExit('FAIL: spatial wrapper differs from pinned network runner beyond approved final-runtime injection')
+print('SPATIAL_WRAPPER_COMPOSITION_AUDIT=PASS pinned-network-runner-plus-v3-final-runtime-pause-injection')
 PY
 
 bash -n "$runner"
-grep -Fq 'SPATIAL_UNPLUG_GATE=READY trusted-quest-connected network-path-proven unplug-usb-now' "$runner" || fail "unplug gate missing"
-grep -Fq "SPATIAL_START_DELAY seconds=" "$runner" || fail "delay marker missing"
-echo "SPATIAL_UNPLUG_WRAPPER_AUDIT=PASS pinned_runner=$PINNED_NETWORK_RUNNER_COMMIT delay=${START_DELAY}s semantics-unchanged"
+grep -Fq 'pause_inject=' "$runner" || fail "pause injection transform missing"
+grep -Fq 'inject+pause_inject+anchor' "$runner" || fail "pause injection composition missing"
+echo "SPATIAL_UNPLUG_WRAPPER_AUDIT=PASS pinned_runner=$PINNED_NETWORK_RUNNER_COMMIT delay=${START_DELAY}s reducer-and-workload-semantics-unchanged"
 exec bash "$runner"

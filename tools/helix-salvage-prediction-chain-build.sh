@@ -8,19 +8,25 @@ if [[ -z "${repo_root}" ]]; then
 fi
 cd "${repo_root}"
 
-branch="helix-cross-frame-matrix-prototype"
-git fetch origin "${branch}"
-remote_head="$(git rev-parse "refs/remotes/origin/${branch}")"
+tooling_branch="helix-cross-frame-matrix-prototype"
+built_branch="helix-prediction-chain-built"
+expected_parent="443377197772444c3062c03bfa5b4a33220ab4b8"
+git fetch origin "${tooling_branch}"
+remote_tooling_head="$(git rev-parse "refs/remotes/origin/${tooling_branch}")"
+if ! git merge-base --is-ancestor "${expected_parent}" "${remote_tooling_head}"; then
+    echo "error: tooling branch no longer descends from audited build base ${expected_parent}" >&2
+    exit 2
+fi
 
 candidate=""
-for dir in $(find "${HOME}" -maxdepth 1 -type d -name 'helix-prediction-chain-build-*' -printf '%T@ %p\n' | sort -nr | awk '{print $2}'); do
-    if [[ -f "${dir}/metadata.txt" && -d "${dir}/worktree/.git" || -f "${dir}/worktree/.git" ]]; then
+while IFS= read -r dir; do
+    if [[ -f "${dir}/metadata.txt" && -f "${dir}/worktree/.git" ]]; then
         if grep -q '^source_commit=' "${dir}/metadata.txt"; then
             candidate="${dir}"
             break
         fi
     fi
-done
+done < <(find "${HOME}" -maxdepth 1 -type d -name 'helix-prediction-chain-build-*' -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
 if [[ -z "${candidate}" ]]; then
     echo "error: no completed prediction-chain build bundle with source_commit found" >&2
     exit 2
@@ -41,9 +47,9 @@ if [[ "$(git -C "${worktree}" rev-parse HEAD)" != "${source_commit}" ]]; then
     exit 2
 fi
 parent="$(git rev-parse "${source_commit}^")"
-if [[ "${parent}" != "${remote_head}" ]]; then
-    echo "error: remote branch moved or source commit parent mismatch" >&2
-    echo "remote_head=${remote_head}" >&2
+if [[ "${parent}" != "${expected_parent}" ]]; then
+    echo "error: source commit parent does not match the exact audited build base" >&2
+    echo "expected_parent=${expected_parent}" >&2
     echo "source_parent=${parent}" >&2
     exit 2
 fi
@@ -126,12 +132,22 @@ fi
 
 printf 'salvaged_bundle=%s\n' "${candidate}"
 printf 'source_commit=%s\n' "${source_commit}"
+printf 'source_parent=%s\n' "${parent}"
 printf 'git_desc=%s\n' "${git_desc}"
 printf 'server=%s\n' "${server}"
 printf 'provenance=PASS generated-version-and-linked-display-version\n'
 
-echo "Publishing already-built source checkpoint with normal fast-forward push"
-git push origin "${source_commit}:${branch}"
+echo "Publishing exact already-built source commit to ${built_branch}"
+if git show-ref --verify --quiet "refs/remotes/origin/${built_branch}"; then
+    existing="$(git rev-parse "refs/remotes/origin/${built_branch}")"
+    if [[ "${existing}" != "${source_commit}" ]]; then
+        echo "error: ${built_branch} already exists at a different commit ${existing}" >&2
+        exit 2
+    fi
+else
+    git push origin "${source_commit}:refs/heads/${built_branch}"
+fi
 
-echo "PASS: preserved prediction-chain build provenance validated and source checkpoint pushed"
+echo "PASS: preserved prediction-chain build provenance validated"
+echo "built_branch=${built_branch}"
 echo "STATUS: existing server build salvaged; no rebuild, install, or runtime test performed"

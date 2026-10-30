@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-shot v2: patch the known unbounded Vulkan-stimulus header search before
-# running it, then launch the already-prepared encoded runtime harness.
+# One-shot v2: patch the known unbounded Vulkan-stimulus header search and
+# pipefail-sensitive loader lookup before running it, then launch the
+# already-prepared encoded runtime harness.
 build_tooling="9fe49dbcc65534b08a8537aa85a855aa399b6a98"
 runtime_tooling="cfa03d67546f25ed5d074d41f035adbf2918bbcd"
 
@@ -61,6 +62,19 @@ timeout --signal=TERM --kill-after=5s 45s c++ -std=c++20 -O2 -Wall -Wextra -Werr
 if old2 not in s:
     raise SystemExit('error: compile anchor not found')
 s=s.replace(old2,new2,1)
+# Close the set -o pipefail + awk early-exit SIGPIPE failure class for both loaders.
+old3="OPENXR_LIB=\"$(ldconfig -p | awk '/libopenxr_loader\\.so\\.1/{print $NF; exit}')\""
+new3="OPENXR_LIB=\"$(ldconfig -p | awk '/libopenxr_loader\\.so\\.1/ && !found {value=$NF; found=1} END {if(found) print value}')\""
+old4="VULKAN_LIB=\"$(ldconfig -p | awk '/libvulkan\\.so\\.1/{print $NF; exit}')\""
+new4="VULKAN_LIB=\"$(ldconfig -p | awk '/libvulkan\\.so\\.1/ && !found {value=$NF; found=1} END {if(found) print value}')\""
+if old3 not in s or old4 not in s:
+    raise SystemExit('error: loader lookup anchors not found')
+s=s.replace(old3,new3,1).replace(old4,new4,1)
+needle='''[[ -n "$OPENXR_LIB" && -f "$OPENXR_LIB" ]] || fail "runtime OpenXR loader library not found"\n[[ -n "$VULKAN_LIB" && -f "$VULKAN_LIB" ]] || fail "runtime Vulkan loader library not found"\n'''
+replacement=needle + '''echo "[preflight] OpenXR loader: $OPENXR_LIB"\necho "[preflight] Vulkan loader: $VULKAN_LIB"\n'''
+if needle not in s:
+    raise SystemExit('error: loader validation anchor not found')
+s=s.replace(needle,replacement,1)
 if 'for root in /usr/include "$WORKTREE/build-everything" "$WORKTREE"' in s:
     raise SystemExit('error: stale unbounded header search remains')
 p.write_text(s)
@@ -70,6 +84,9 @@ PY
 grep -Fq '[preflight] Resolving OpenXR headers from bounded locations' "$build_script"
 grep -Fq 'timeout 5s find "$WORKTREE/build-everything/_deps"' "$build_script"
 grep -Fq '45s c++' "$build_script"
+! grep -Fq 'print $NF; exit' "$build_script"
+grep -Fq '[preflight] OpenXR loader:' "$build_script"
+grep -Fq '[preflight] Vulkan loader:' "$build_script"
 grep -Fq 'stimulus_contract=PASS graphics-bound-vulkan-projection-layer' "$build_script"
 grep -Fq 'HELIX_VULKAN_DONE frames=220' "$runtime_script"
 ! grep -Fq 'XR_MND_headless' "$runtime_script"

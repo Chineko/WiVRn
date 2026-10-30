@@ -389,7 +389,7 @@ video_encoder::video_encoder(vk_bundle & vk,
         need_transfer(not vk.optimal_transfer(vk.queue.family_index, target_queue)),
         bitrate_multiplier(settings.bitrate_multiplier),
         shared_sender(async_send ? sender::get() : nullptr),
-        helix_td_enabled(settings.encoder_name == encoder_nvenc),
+        helix_td_enabled(false),
         idr(std::move(idr)),
         extent{
                 .width = settings.width,

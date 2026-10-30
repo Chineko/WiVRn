@@ -88,13 +88,24 @@ h_old='''HOST_IP="$(ip -4 route get "$QUEST_IP" | awk '{for(i=1;i<=NF;i++) if($i
 h_new='''HOST_IP="$(ip -4 route get "$QUEST_IP" | awk '{for(i=1;i<=NF;i++) if($i=="src" && !found){value=$(i+1); found=1}} END {if(found) print value}')"\n'''
 once(h_old,h_new,'host IPv4 discovery')
 
-apply_old="if not any(x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')"
-apply_new="if not any(x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')"
-once(apply_old,apply_new,'invalidation applied reducer')
+# The three torture scenarios do not share one event shape. rtx8 and gap9
+# prove same-frame decoder recovery; full_reference proves explicit reference
+# invalidation and therefore intentionally has no feedback/recovery pair.
+scenario_old='''for c in ('rtx8','gap9','full_reference'):\n    if c not in inj: errors.append(f'{c}:missing_inject')\n    if c not in done: errors.append(f'{c}:missing_done')\n    if c not in fb: errors.append(f'{c}:missing_feedback')\n    if c not in rec: errors.append(f'{c}:missing_recovery')\n'''
+scenario_new='''for c in ('rtx8','gap9','full_reference'):\n    if c not in inj: errors.append(f'{c}:missing_inject')\n    if c not in done: errors.append(f'{c}:missing_done')\nfor c in ('rtx8','gap9'):\n    if c not in fb: errors.append(f'{c}:missing_feedback')\n    if c not in rec: errors.append(f'{c}:missing_recovery')\n'''
+once(scenario_old,scenario_new,'scenario event requirements')
+
+gap_full_old='''for c in ('gap9','full_reference'):\n    if c in fb and fb[c].get('sent_to_decoder') != '0': errors.append(f'{c}:expected_incomplete')\n    if c in rec:\n        if rec[c].get('mode') != 'fresh_frame': errors.append(f'{c}:not_fresh_recovery')\n        try: delta=int(rec[c].get('delta','999'))\n        except: delta=999\n        if delta < 1 or delta > 3: errors.append(f'{c}:recovery_delta={delta}')\n    if c in inj:\n        frame=inj[c].get('frame')\n        if not any(x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')\n'''
+gap_full_new='''if 'gap9' in fb and fb['gap9'].get('sent_to_decoder') != '1': errors.append('gap9:not_same_frame_decoded')\nif 'gap9' in rec and not (rec['gap9'].get('mode')=='same_frame' and rec['gap9'].get('delta')=='0'): errors.append('gap9:bad_recovery')\nif 'full_reference' in fb: errors.append('full_reference:unexpected_feedback')\nif 'full_reference' in rec: errors.append('full_reference:unexpected_recovery')\nif 'full_reference' in inj:\n    frame=inj['full_reference'].get('frame')\n    if not any(x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append('full_reference:invalidation_not_applied')\n'''
+once(gap_full_old,gap_full_new,'gap9/full_reference semantics')
 
 unexpected_old="if any(x.get('frame')==frame for x in inv): errors.append('rtx8:unexpected_invalidation')"
 unexpected_new="if any(x.get('stream')=='0' and x.get('frame')==frame for x in inv): errors.append('rtx8:unexpected_invalidation')"
 once(unexpected_old,unexpected_new,'unexpected invalidation reducer')
+
+summary_old="if z.get('injected')!='3' or z.get('feedback')!='3' or z.get('recovered')!='3' or z.get('dirty')!='0' or z.get('next_case')!='3': errors.append('summary_not_clean')"
+summary_new="if z.get('injected')!='3' or z.get('feedback')!='2' or z.get('recovered')!='2' or z.get('dirty')!='2' or z.get('next_case')!='3': errors.append('summary_not_expected')"
+once(summary_old,summary_new,'torture summary semantics')
 
 required=[
  'Quest readiness will be proven by trusted Client connected after launch',
@@ -105,11 +116,23 @@ required=[
  'HELIX_ENCODED_NVENC_CAP stream=0 supported=1',
  'HELIX_ENCODED_TORTURE_SUMMARY',
  "for c in ('rtx8','gap9','full_reference')",
- "x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied'",
+ "for c in ('rtx8','gap9')",
+ "gap9:not_same_frame_decoded",
+ "full_reference:invalidation_not_applied",
+ "z.get('feedback')!='2'",
 ]
 for x in required:
     if x not in s: raise SystemExit('FAIL: final runtime requirement missing: '+x)
-for x in ['Quest is not awake; wear it and keep display on','XR_MND_headless','HELIX_HEADLESS_DONE','$OUT/headless.txt','print $(i+1); exit']:
+for x in [
+    'Quest is not awake; wear it and keep display on',
+    'XR_MND_headless',
+    'HELIX_HEADLESS_DONE',
+    '$OUT/headless.txt',
+    'print $(i+1); exit',
+    "for c in ('gap9','full_reference')",
+    "z.get('feedback')!='3'",
+    'summary_not_clean',
+]:
     if x in s: raise SystemExit('FAIL: stale final runtime pattern remains: '+x)
 p.write_text(s)
 PY
@@ -121,7 +144,13 @@ grep -Fq 'Quest readiness will be proven by trusted Client connected after launc
 grep -Fq 'HELIX_VULKAN_ENTROPY patterns=8' "$EMITTED"
 grep -Fq 'HELIX_VULKAN_DONE frames=220' "$EMITTED"
 grep -Fq 'v5 render-counted stimulus never produced a renderable frame' "$EMITTED"
-grep -Fq "x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied'" "$EMITTED"
+grep -Fq "for c in ('rtx8','gap9')" "$EMITTED"
+grep -Fq 'gap9:not_same_frame_decoded' "$EMITTED"
+grep -Fq 'full_reference:invalidation_not_applied' "$EMITTED"
+grep -Fq "z.get('feedback')!='2'" "$EMITTED"
+! grep -Fq "for c in ('gap9','full_reference')" "$EMITTED"
+! grep -Fq "z.get('feedback')!='3'" "$EMITTED"
+! grep -Fq 'summary_not_clean' "$EMITTED"
 ! grep -Fq 'XR_MND_headless' "$EMITTED"
 ! grep -Fq 'HELIX_HEADLESS_DONE' "$EMITTED"
 

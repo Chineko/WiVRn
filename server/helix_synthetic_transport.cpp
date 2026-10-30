@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <span>
@@ -339,6 +340,19 @@ bool run_case(sender & tx,
 		        obs.feedback.size(),
 		        obs.gaps.size(),
 		        obs.rtx.size());
+		std::fprintf(stderr,
+		             "HELIX_SYNTHETIC_TRANSPORT_CASE_FAILED stream=%u base=%llu missing=%u start=%u damaged_ok=%d exposing_ok=%d gap_ok=%d feedback=%zu gaps=%zu rtx=%zu\n",
+		             stream,
+		             static_cast<unsigned long long>(base),
+		             missing,
+		             start,
+		             damaged_ok,
+		             exposing_ok,
+		             gap_ok,
+		             obs.feedback.size(),
+		             obs.gaps.size(),
+		             obs.rtx.size());
+		std::fflush(stderr);
 	}
 	return good;
 }
@@ -613,6 +627,30 @@ int run(wivrn_connection & connection, std::stop_token stop_token)
 	        static_cast<unsigned long long>(s.rtx_good),
 	        rtx_ratio,
 	        static_cast<unsigned long long>(s.catastrophic));
+
+	std::fprintf(stderr,
+	             "HELIX_SYNTHETIC_TRANSPORT_RESULT pass=%d total=%llu good=%llu good_ratio=%.6f fallback_total=%llu fallback_good=%llu fallback_ratio=%.6f recorded_total=%llu recorded_good=%llu recorded_ratio=%.6f envelope_total=%llu envelope_good=%llu envelope_ratio=%.6f ordering_total=%llu ordering_good=%llu ordering_ratio=%.6f rtx_total=%llu rtx_good=%llu rtx_ratio=%.6f catastrophic=%llu\n",
+	             pass,
+	             static_cast<unsigned long long>(s.total),
+	             static_cast<unsigned long long>(s.good),
+	             good_ratio,
+	             static_cast<unsigned long long>(s.fallback_total),
+	             static_cast<unsigned long long>(s.fallback_good),
+	             fallback_ratio,
+	             static_cast<unsigned long long>(s.recorded_total),
+	             static_cast<unsigned long long>(s.recorded_good),
+	             recorded_ratio,
+	             static_cast<unsigned long long>(s.envelope_total),
+	             static_cast<unsigned long long>(s.envelope_good),
+	             envelope_ratio,
+	             static_cast<unsigned long long>(s.ordering_total),
+	             static_cast<unsigned long long>(s.ordering_good),
+	             ordering_ratio,
+	             static_cast<unsigned long long>(s.rtx_total),
+	             static_cast<unsigned long long>(s.rtx_good),
+	             rtx_ratio,
+	             static_cast<unsigned long long>(s.catastrophic));
+	std::fflush(stderr);
 
 	return pass ? 0 : 1;
 }

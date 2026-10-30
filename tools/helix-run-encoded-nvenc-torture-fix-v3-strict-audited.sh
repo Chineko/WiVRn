@@ -108,9 +108,11 @@ replacement=(
 )
 once(marker,replacement,'nested v3 reducer requirements')
 
-once('FIX_V2_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-unchanged',
-     'FIX_V3_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-v3-audited',
-     'binding success gate')
+old_success='FIX_V2_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-unchanged'
+new_success='FIX_V3_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-v3-audited'
+if s.count(old_success) != 2:
+    raise SystemExit(f"FAIL: binding success gate anchor count={s.count(old_success)}")
+s=s.replace(old_success,new_success)
 
 p.write_text(s)
 PY

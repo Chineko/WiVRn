@@ -95,6 +95,13 @@ scenario_old='''for c in ('rtx8','gap9','full_reference'):\n    if c not in inj:
 scenario_new='''for c in ('rtx8','gap9','full_reference'):\n    if c not in inj: errors.append(f'{c}:missing_inject')\n    if c not in done: errors.append(f'{c}:missing_done')\nfor c in ('rtx8','gap9'):\n    if c not in fb: errors.append(f'{c}:missing_feedback')\n    if c not in rec: errors.append(f'{c}:missing_recovery')\n'''
 once(scenario_old,scenario_new,'scenario event requirements')
 
+# Scenario names describe the injected pattern, but the exact packet/shard drop
+# count is transport-layout dependent. Require that loss actually occurred and
+# validate success from the decoder/recovery semantics below instead of 8/9.
+drop_old="""if 'rtx8' in done and int(done['rtx8'].get('dropped','-1')) != 8: errors.append('rtx8:drop_count')\nif 'gap9' in done and int(done['gap9'].get('dropped','-1')) != 9: errors.append('gap9:drop_count')"""
+drop_new="""if 'rtx8' in done and int(done['rtx8'].get('dropped','0')) <= 0: errors.append('rtx8:no_drop')\nif 'gap9' in done and int(done['gap9'].get('dropped','0')) <= 0: errors.append('gap9:no_drop')"""
+once(drop_old,drop_new,'rtx8/gap9 drop-count semantics')
+
 gap_full_old='''for c in ('gap9','full_reference'):\n    if c in fb and fb[c].get('sent_to_decoder') != '0': errors.append(f'{c}:expected_incomplete')\n    if c in rec:\n        if rec[c].get('mode') != 'fresh_frame': errors.append(f'{c}:not_fresh_recovery')\n        try: delta=int(rec[c].get('delta','999'))\n        except: delta=999\n        if delta < 1 or delta > 3: errors.append(f'{c}:recovery_delta={delta}')\n    if c in inj:\n        frame=inj[c].get('frame')\n        if not any(x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')\n'''
 gap_full_new='''if 'gap9' in fb and fb['gap9'].get('sent_to_decoder') != '1': errors.append('gap9:not_same_frame_decoded')\nif 'gap9' in rec and not (rec['gap9'].get('mode')=='same_frame' and rec['gap9'].get('delta')=='0'): errors.append('gap9:bad_recovery')\nif 'full_reference' in fb: errors.append('full_reference:unexpected_feedback')\nif 'full_reference' in rec: errors.append('full_reference:unexpected_recovery')\nif 'full_reference' in inj:\n    frame=inj['full_reference'].get('frame')\n    if not any(x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append('full_reference:invalidation_not_applied')\n'''
 once(gap_full_old,gap_full_new,'gap9/full_reference semantics')
@@ -117,6 +124,8 @@ required=[
  'HELIX_ENCODED_TORTURE_SUMMARY',
  "for c in ('rtx8','gap9','full_reference')",
  "for c in ('rtx8','gap9')",
+ "rtx8:no_drop",
+ "gap9:no_drop",
  "gap9:not_same_frame_decoded",
  "full_reference:invalidation_not_applied",
  "z.get('feedback')!='2'",
@@ -132,6 +141,8 @@ for x in [
     "for c in ('gap9','full_reference')",
     "z.get('feedback')!='3'",
     'summary_not_clean',
+    "errors.append('rtx8:drop_count')",
+    "errors.append('gap9:drop_count')",
 ]:
     if x in s: raise SystemExit('FAIL: stale final runtime pattern remains: '+x)
 p.write_text(s)
@@ -145,9 +156,13 @@ grep -Fq 'HELIX_VULKAN_ENTROPY patterns=8' "$EMITTED"
 grep -Fq 'HELIX_VULKAN_DONE frames=220' "$EMITTED"
 grep -Fq 'v5 render-counted stimulus never produced a renderable frame' "$EMITTED"
 grep -Fq "for c in ('rtx8','gap9')" "$EMITTED"
+grep -Fq 'rtx8:no_drop' "$EMITTED"
+grep -Fq 'gap9:no_drop' "$EMITTED"
 grep -Fq 'gap9:not_same_frame_decoded' "$EMITTED"
 grep -Fq 'full_reference:invalidation_not_applied' "$EMITTED"
 grep -Fq "z.get('feedback')!='2'" "$EMITTED"
+! grep -Fq "errors.append('rtx8:drop_count')" "$EMITTED"
+! grep -Fq "errors.append('gap9:drop_count')" "$EMITTED"
 ! grep -Fq "for c in ('gap9','full_reference')" "$EMITTED"
 ! grep -Fq "z.get('feedback')!='3'" "$EMITTED"
 ! grep -Fq 'summary_not_clean' "$EMITTED"

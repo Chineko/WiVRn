@@ -11,7 +11,7 @@ cd "${repo_root}"
 branch="helix-quest-synthetic-transport"
 policy_commit="cc9e68c09d863ed32559116a0edea2e1caa5ffde"
 transformer="tools/helix-apply-quest-synthetic-transport.py"
-expected_transformer_blob="ca864842c53afc215bc52aae6f1d931a3df33b6b"
+expected_transformer_blob="f9e4138f812cd97365ca37f7f4215d02dc5c4114"
 source_paths=(
     server/main.cpp
     server/CMakeLists.txt
@@ -73,7 +73,8 @@ for marker in \
     'HELIX_SYNTHETIC_TRANSPORT_EXIT' \
     'HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY' \
     'HELIX_SYNTHETIC_TRANSPORT_RESULT' \
-    'shards_per_frame, 0, false'; do
+    'shards_per_frame, 0, false' \
+    '::connection.reset()'; do
     grep -R -Fq -- "${marker}" "${source_paths[@]}" || { echo "error: source marker missing: ${marker}" >&2; exit 2; }
 done
 grep -Fq 'helix_synthetic_transport.cpp' server/CMakeLists.txt || { echo "error: synthetic transport source is not in server target" >&2; exit 2; }

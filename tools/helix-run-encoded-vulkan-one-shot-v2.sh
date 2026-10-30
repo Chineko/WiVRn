@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-shot v2: patch the known unbounded Vulkan-stimulus header search and
-# pipefail-sensitive loader lookup before running it, then launch the
-# already-prepared encoded runtime harness.
+# One-shot v2: patch the known Vulkan-stimulus harness compatibility failures
+# before running it, then launch the already-prepared encoded runtime harness.
 build_tooling="9fe49dbcc65534b08a8537aa85a855aa399b6a98"
 runtime_tooling="cfa03d67546f25ed5d074d41f035adbf2918bbcd"
 
@@ -53,6 +52,28 @@ echo "[preflight] OpenXR include root: $inc"
 if old not in s:
     raise SystemExit('error: unbounded header-search anchor not found')
 s=s.replace(old,new,1)
+
+# OpenXR Vulkan structs require Vulkan handle definitions before openxr_platform.h.
+# Use the base KHR structs directly: enable2 aliases these types, while older distro
+# headers can expose alias layouts incompatibly when included in the wrong order.
+old_inc='''#define XR_USE_GRAPHICS_API_VULKAN
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+#include <vulkan/vulkan.h>
+'''
+new_inc='''#define XR_USE_GRAPHICS_API_VULKAN
+#include <vulkan/vulkan.h>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+'''
+if old_inc not in s:
+    raise SystemExit('error: Vulkan/OpenXR include-order anchor not found')
+s=s.replace(old_inc,new_inc,1)
+s=s.replace('XrGraphicsBindingVulkan2KHR', 'XrGraphicsBindingVulkanKHR')
+s=s.replace('XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR', 'XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR')
+s=s.replace('XrSwapchainImageVulkan2KHR', 'XrSwapchainImageVulkanKHR')
+s=s.replace('XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR', 'XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR')
+
 old2='''echo '[1/3] Compiling graphics-bound Vulkan/OpenXR stimulus'
 c++ -std=c++20 -O2 -Wall -Wextra -Werror -I"$inc" "$SRC" "$OPENXR_LIB" "$VULKAN_LIB" -pthread -o "$BIN"
 '''
@@ -62,6 +83,7 @@ timeout --signal=TERM --kill-after=5s 45s c++ -std=c++20 -O2 -Wall -Wextra -Werr
 if old2 not in s:
     raise SystemExit('error: compile anchor not found')
 s=s.replace(old2,new2,1)
+
 # Close the set -o pipefail + awk early-exit SIGPIPE failure class for both loaders.
 old3="OPENXR_LIB=\"$(ldconfig -p | awk '/libopenxr_loader\\.so\\.1/{print $NF; exit}')\""
 new3="OPENXR_LIB=\"$(ldconfig -p | awk '/libopenxr_loader\\.so\\.1/ && !found {value=$NF; found=1} END {if(found) print value}')\""
@@ -87,6 +109,11 @@ grep -Fq '45s c++' "$build_script"
 ! grep -Fq 'print $NF; exit' "$build_script"
 grep -Fq '[preflight] OpenXR loader:' "$build_script"
 grep -Fq '[preflight] Vulkan loader:' "$build_script"
+grep -Fq '#include <vulkan/vulkan.h>' "$build_script"
+grep -Fq 'XrGraphicsBindingVulkanKHR' "$build_script"
+grep -Fq 'XrSwapchainImageVulkanKHR' "$build_script"
+! grep -Fq 'XrGraphicsBindingVulkan2KHR' "$build_script"
+! grep -Fq 'XrSwapchainImageVulkan2KHR' "$build_script"
 grep -Fq 'stimulus_contract=PASS graphics-bound-vulkan-projection-layer' "$build_script"
 grep -Fq 'HELIX_VULKAN_DONE frames=220' "$runtime_script"
 ! grep -Fq 'XR_MND_headless' "$runtime_script"

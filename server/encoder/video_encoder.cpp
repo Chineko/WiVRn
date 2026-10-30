@@ -242,11 +242,9 @@ void helix_encoded_log_summary()
 		recovered += record.recovered;
 		if (!record.feedback_seen || !record.recovered)
 			++dirty;
-		else if (record.scenario == helix_encoded_case::rtx8 && !record.sent_to_decoder)
+		else if (!record.incomplete_seen)
 			++dirty;
-		else if (record.scenario != helix_encoded_case::rtx8 && !record.incomplete_seen)
-			++dirty;
-		else if (record.recovery_frame < record.frame || record.recovery_frame - record.frame > 3)
+		else if (record.recovery_frame <= record.frame || record.recovery_frame - record.frame > 3)
 			++dirty;
 	}
 	std::fprintf(stderr,

@@ -11,7 +11,7 @@ cd "${repo_root}"
 branch="helix-quest-transport-torture"
 base_commit="55a62a30671c19179701b686f469de377ba7865e"
 transformer="tools/helix-apply-quest-transport-torture-v2.py"
-expected_transformer_blob="b7ea5a4954fb14edda583779882af667170a78a3"
+expected_transformer_blob="8800cb777c8f49e9e01fb4e9bce0e31fd7320aba"
 source_path="server/helix_synthetic_transport.cpp"
 
 for cmd in git python3 clang-format cmake ninja ar nm realpath grep find; do

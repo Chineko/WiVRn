@@ -59,27 +59,30 @@ echo "NETWORK_PATH_GATE=PASS quest_wlan0=$quest_ip host_route=$route adb_forward
 echo "Installing exact Quest APK version=$VERSION_NAME"
 adb install -r "$APK" >/dev/null || fail "APK install failed"
 
-# Identify the exact installed package from Android itself by matching the pinned build version.
+# Cryptographically identify the installed WiVRn package by hashing Android's installed base.apk.
 package=""
+installed_apk_path=""
 while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
-    got="$(adb shell dumpsys package "$candidate" 2>/dev/null | sed -n 's/^[[:space:]]*versionName=//p' | head -1 | tr -d '\r')"
-    if [[ "$got" == "$VERSION_NAME" ]]; then
+    path_line="$(adb shell pm path "$candidate" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | head -1)"
+    [[ -n "$path_line" ]] || continue
+    got_sha="$(adb exec-out cat "$path_line" 2>/dev/null | sha256sum | awk '{print $1}')"
+    if [[ "$got_sha" == "$APK_SHA256" ]]; then
         if [[ -n "$package" && "$package" != "$candidate" ]]; then
-            fail "multiple installed WiVRn packages match version $VERSION_NAME: $package $candidate"
+            fail "multiple installed WiVRn packages match pinned APK hash: $package $candidate"
         fi
         package="$candidate"
+        installed_apk_path="$path_line"
     fi
 done < <(adb shell pm list packages 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | grep '^org\.meumeu\.wivrn')
-[[ -n "$package" ]] || fail "installed WiVRn package with version $VERSION_NAME not found"
+[[ -n "$package" ]] || fail "installed WiVRn package matching pinned APK SHA256 not found"
 installed_version="$(adb shell dumpsys package "$package" 2>/dev/null | sed -n 's/^[[:space:]]*versionName=//p' | head -1 | tr -d '\r')"
-[[ "$installed_version" == "$VERSION_NAME" ]] || fail "installed version mismatch: expected=$VERSION_NAME got=$installed_version"
-echo "Quest package=$package version=$installed_version"
+echo "Quest package=$package installed_apk=$installed_apk_path version=${installed_version:-unknown} hash=$APK_SHA256"
 
 evidence="$HOME/helix-synthetic-network-runtime-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$evidence"
-printf 'source_commit=%s\nserver_sha256=%s\napk_sha256=%s\npackage=%s\nversion=%s\nquest_wlan0=%s\nhost_route=%s\n' \
-    "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$package" "$installed_version" "$quest_ip" "$route" >"$evidence/metadata.txt"
+printf 'source_commit=%s\nserver_sha256=%s\napk_sha256=%s\npackage=%s\nversion=%s\ninstalled_apk=%s\nquest_wlan0=%s\nhost_route=%s\n' \
+    "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$package" "${installed_version:-unknown}" "$installed_apk_path" "$quest_ip" "$route" >"$evidence/metadata.txt"
 
 service_was_active=0
 systemctl --user is-active --quiet wivrn.service && service_was_active=1 || true

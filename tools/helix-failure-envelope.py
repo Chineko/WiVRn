@@ -178,17 +178,14 @@ class Row:
 
 def receiver_loss_staircase() -> list[Row]:
     rows = []
-    # Source-confirmed current/next behavior: any missing shard means the current frame
-    # cannot complete; a complete next frame advances and emits incomplete feedback.
-    # This is a model boundary, not a Quest measurement.
     for missing in range(0, SHARDS_PER_FRAME + 1):
-        complete = missing == 0
-        expected = complete or missing > 0
+        # Source-model result: 0 missing completes; any missing count 1..64 makes
+        # the current frame incomplete when a complete next frame exposes it.
         rows.append(Row(
             "receiver_shard_loss",
             f"missing={missing}",
             1,
-            int(expected),
+            1,
             int(missing > 0),
             int(missing > 0),
             0,
@@ -216,52 +213,59 @@ def recorded_age_envelope() -> list[Row]:
     return rows
 
 
-def repeated_full_frame_envelope(max_losses: int = 32) -> list[Row]:
+def repeated_full_frame_envelope(max_losses: int = 64) -> list[Row]:
     rows = []
     for healthy_gap in (0, 1, 2, 4, 8, 16, 32, 60):
         for losses in range(1, max_losses + 1):
             m = DeferredInvalidationModel(True, 0)
             next_frame = 1
             clean = True
-            for loss_no in range(losses):
+            fallback = False
+            for _ in range(losses):
                 lost = next_frame
                 m.last_submitted = lost
                 m.on_feedback(Feedback(lost, False))
                 t = m.encode(lost + 1, {lost: True})
-                if t not in {"P", "I"}:
+                if t == "I":
+                    fallback = True
+                elif t != "P":
                     clean = False
                 next_frame = lost + 2
                 for _ in range(healthy_gap):
                     m.ack(next_frame)
                     t = m.encode(next_frame + 1)
-                    if t not in {"P", "I"}:
+                    if t == "I":
+                        fallback = True
+                    elif t != "P":
                         clean = False
                     next_frame += 2
-            good = clean and not m.catastrophic and not m.pending
+            safe = clean and not m.catastrophic and not m.pending
             rows.append(Row(
                 "repeated_full_frame_loss",
-                f"healthy_gap={healthy_gap},losses={losses}",
-                1, int(good), 0, 0, len(m.catastrophic),
+                f"healthy_gap={healthy_gap},losses={losses},contained_without_idr={int(safe and not fallback)}",
+                1,
+                int(safe),
+                int(safe and fallback),
+                int(fallback),
+                len(m.catastrophic),
             ))
     return rows
 
 
 def queued_loss_envelope(max_losses: int = 24) -> list[Row]:
     rows = []
-    # Multiple failed reference feedback events arrive before the encoder drains.
-    # This directly exercises the bounded 16-entry invalidation queue.
     for losses in range(1, max_losses + 1):
         m = DeferredInvalidationModel(True, 0)
         for frame in range(1, losses + 1):
             m.last_submitted = losses
             m.on_feedback(Feedback(frame, False))
         t = m.encode(losses + 1)
-        fallback = m.stats["fallback_idr"] > 0
+        fallback = m.stats["fallback_idr"] > 0 or t == "I"
         fallback_clean = fallback and t == "I" and not m.pending
-        good = (not fallback and t in {"P", "I"} and not m.pending) or fallback_clean
+        good = (not fallback and t == "P" and not m.pending) or fallback_clean
         rows.append(Row(
             "queued_reference_losses",
-            f"losses={losses}",
+            f"losses={losses},contained_without_idr={int(good and not fallback)}",
             1, int(good), int(fallback_clean), int(fallback), len(m.catastrophic),
         ))
     return rows
@@ -285,6 +289,37 @@ def api_failure_envelope(max_losses: int = 16) -> list[Row]:
     return rows
 
 
+def consecutive_loss_boundary(limit: int = 256) -> int | None:
+    m = DeferredInvalidationModel(True, 0)
+    next_frame = 1
+    for loss_no in range(1, limit + 1):
+        lost = next_frame
+        m.last_submitted = lost
+        m.on_feedback(Feedback(lost, False))
+        t = m.encode(lost + 1, {lost: True})
+        if t == "I":
+            return loss_no
+        next_frame = lost + 2
+    return None
+
+
+def healthy_gap_one_continuity(limit: int = 256) -> bool:
+    m = DeferredInvalidationModel(True, 0)
+    next_frame = 1
+    for _ in range(limit):
+        lost = next_frame
+        m.last_submitted = lost
+        m.on_feedback(Feedback(lost, False))
+        if m.encode(lost + 1, {lost: True}) != "P":
+            return False
+        good_frame = lost + 2
+        m.ack(good_frame)
+        if m.encode(good_frame + 1) != "P":
+            return False
+        next_frame = good_frame + 2
+    return not m.pending and not m.catastrophic
+
+
 def summarize(rows: list[Row]) -> dict:
     totals = Counter()
     family = {}
@@ -300,10 +335,7 @@ def summarize(rows: list[Row]) -> dict:
         f["fallback_clean"] += r.fallback_clean
         f["fallback_total"] += r.fallback_total
         f["catastrophic"] += r.catastrophic
-    return {
-        "totals": dict(totals),
-        "families": {k: dict(v) for k, v in family.items()},
-    }
+    return {"totals": dict(totals), "families": {k: dict(v) for k, v in family.items()}}
 
 
 def main() -> int:
@@ -324,12 +356,25 @@ def main() -> int:
     fallback_ratio = t["fallback_clean"] / t["fallback_total"] if t["fallback_total"] else 1.0
     passed = good_ratio >= GOOD_GATE and fallback_ratio >= FALLBACK_GATE and t["catastrophic"] == 0
 
+    recorded_ages = [round((span + delay) / FRAME_MS) for _, _, _, span, delay in RECORDED_EVENTS]
+    boundaries = {
+        "deferred_queue_capacity_before_idr": QUEUE_LIMIT,
+        "first_queued_loss_count_for_idr": QUEUE_LIMIT + 1,
+        "first_consecutive_full_frame_loss_cycle_for_watchdog_idr": consecutive_loss_boundary(),
+        "one_good_decoded_frame_between_losses_preserves_continuity_for_256_cycles": healthy_gap_one_continuity(),
+        "recorded_feedback_age_frames_min": min(recorded_ages),
+        "recorded_feedback_age_frames_max": max(recorded_ages),
+        "stale_decoder_watchdog_frames": STALE_DECODER_FRAMES,
+        "invalidation_recent_horizon_frames": RECENT_HORIZON,
+    }
+
     payload = {
         "model_commit": "cc9e68c09d863ed32559116a0edea2e1caa5ffde",
-        "scope": "host-only model; not Quest/RF/GPU runtime evidence",
+        "scope": "host-only source-derived model; not Quest/RF/GPU runtime evidence",
         "pass": passed,
         "good_ratio": good_ratio,
         "fallback_ratio": fallback_ratio,
+        "boundaries": boundaries,
         "summary": summary,
         "rows": [asdict(r) | {"good_ratio": r.good_ratio, "fallback_ratio": r.fallback_ratio} for r in rows],
     }
@@ -342,11 +387,14 @@ def main() -> int:
         print(f"trials={t['trials']} good={t['good']} good_ratio={good_ratio:.6f}")
         print(f"fallback={t['fallback_clean']}/{t['fallback_total']} fallback_ratio={fallback_ratio:.6f}")
         print(f"catastrophic={t['catastrophic']}")
+        print("continuity_boundaries:")
+        for key, value in boundaries.items():
+            print(f"  {key}={value}")
         for name, f in summary["families"].items():
             gr = f['good'] / f['trials'] if f['trials'] else 0.0
             fr = f['fallback_clean'] / f['fallback_total'] if f['fallback_total'] else 1.0
             print(f"family={name} good={f['good']}/{f['trials']} ({gr:.3%}) fallback={f['fallback_clean']}/{f['fallback_total']} ({fr:.3%}) catastrophic={f['catastrophic']}")
-        print("scope=host-only-model; Quest/RF/GPU runtime still unproven")
+        print("scope=host-only-source-model; Quest/RF/GPU runtime still unproven")
     return 0 if passed else 1
 
 

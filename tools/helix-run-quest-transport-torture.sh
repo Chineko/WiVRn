@@ -129,7 +129,7 @@ result_line="$(grep 'HELIX_SYNTHETIC_TRANSPORT_RESULT' "${out}/server.log" | tai
 exit_line="$(grep 'HELIX_SYNTHETIC_TRANSPORT_EXIT' "${out}/server.log" | tail -1 || true)"
 printf 'server_status=%s\n%s\n%s\n' "${server_status}" "${result_line}" "${exit_line}" | tee "${out}/result.txt"
 
-crash_hits="$(grep -E "${package}.*(FATAL|Fatal signal|ANR)" "${out}/quest-logcat.txt" | wc -l)"
+crash_hits="$(( (grep -E "${package}.*(FATAL|Fatal signal|ANR)" "${out}/quest-logcat.txt" || true) | wc -l ))"
 printf 'quest_crash_marker_hits=%s\n' "${crash_hits}" | tee -a "${out}/result.txt"
 
 pass=1

@@ -11,9 +11,10 @@
 #include <map>
 #include <set>
 #include <span>
-#include <string_view>
+#include <stdexcept>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -22,7 +23,6 @@ namespace wivrn::helix_synthetic_transport
 {
 namespace
 {
-constexpr uint8_t stream_index = 0;
 constexpr uint16_t width = 256;
 constexpr uint16_t height = 160;
 constexpr size_t frame_bytes = size_t(width) * size_t(height) * 3 / 2;
@@ -61,7 +61,7 @@ constexpr std::array recorded_events{
 
 struct observation
 {
-	std::map<uint64_t, from_headset::feedback> feedback;
+	std::map<std::pair<uint8_t, uint64_t>, from_headset::feedback> feedback;
 	std::vector<from_headset::video_gap_report> gaps;
 	std::vector<from_headset::video_retransmission_request> rtx;
 };
@@ -79,6 +79,7 @@ struct score
 
 struct packet_plan
 {
+	uint8_t stream;
 	uint64_t frame_idx;
 	std::set<uint16_t> omitted;
 	bool retransmission = false;
@@ -124,7 +125,7 @@ class sender
 {
 	wivrn_connection & connection;
 	std::stop_token stop_token;
-	uint64_t packet_sequence = 0;
+	std::array<uint64_t, 2> packet_sequence{};
 	std::array<uint8_t, payload_bytes> payload{};
 
 public:
@@ -135,9 +136,9 @@ public:
 			payload[i] = uint8_t(i);
 	}
 
-	uint64_t next_sequence() const
+	uint64_t next_sequence(uint8_t stream) const
 	{
-		return packet_sequence + 1;
+		return packet_sequence.at(stream) + 1;
 	}
 
 	void send_frame(const packet_plan & plan)
@@ -147,12 +148,12 @@ public:
 			if (stop_token.stop_requested())
 				throw std::runtime_error("synthetic transport cancelled");
 
-			const uint64_t seq = ++packet_sequence;
+			const uint64_t seq = ++packet_sequence.at(plan.stream);
 			if (plan.omitted.contains(shard_idx))
 				continue;
 
 			to_headset::video_stream_data_shard packet{};
-			packet.stream_item_idx = stream_index;
+			packet.stream_item_idx = plan.stream;
 			packet.frame_idx = plan.frame_idx;
 			packet.packet_sequence = seq;
 			packet.retransmission = plan.retransmission;
@@ -177,7 +178,7 @@ void collect(wivrn_connection & connection, observation & out, std::chrono::mill
 		        [&](auto && packet) {
 			        using T = std::remove_cvref_t<decltype(packet)>;
 			        if constexpr (std::is_same_v<T, from_headset::feedback>)
-				        out.feedback[packet.frame_index] = packet;
+				        out.feedback[{packet.stream_index, packet.frame_index}] = packet;
 			        else if constexpr (std::is_same_v<T, from_headset::video_gap_report>)
 				        out.gaps.push_back(packet);
 			        else if constexpr (std::is_same_v<T, from_headset::video_retransmission_request>)
@@ -187,22 +188,22 @@ void collect(wivrn_connection & connection, observation & out, std::chrono::mill
 	}
 }
 
-bool feedback_success(const observation & obs, uint64_t frame)
+bool feedback_success(const observation & obs, uint8_t stream, uint64_t frame)
 {
-	auto it = obs.feedback.find(frame);
+	auto it = obs.feedback.find({stream, frame});
 	return it != obs.feedback.end() && it->second.sent_to_decoder != 0;
 }
 
-bool feedback_incomplete(const observation & obs, uint64_t frame)
+bool feedback_incomplete(const observation & obs, uint8_t stream, uint64_t frame)
 {
-	auto it = obs.feedback.find(frame);
+	auto it = obs.feedback.find({stream, frame});
 	return it != obs.feedback.end() && it->second.sent_to_decoder == 0;
 }
 
-bool gap_covers(const observation & obs, uint64_t first, uint64_t count)
+bool gap_covers(const observation & obs, uint8_t stream, uint64_t first, uint64_t count)
 {
 	return std::ranges::any_of(obs.gaps, [&](const auto & gap) {
-		return gap.stream_index == stream_index && gap.first_missing_sequence <= first &&
+		return gap.stream_index == stream && gap.first_missing_sequence <= first &&
 		       gap.first_missing_sequence + gap.missing_count >= first + count;
 	});
 }
@@ -226,19 +227,22 @@ void note(score & s, bool good, bool fallback, bool recorded)
 bool run_case(sender & tx,
               wivrn_connection & connection,
               score & s,
+              uint8_t stream,
               uint64_t base,
               uint16_t missing,
               uint16_t start,
               bool recorded)
 {
 	observation obs;
-	const uint64_t first_missing_sequence = tx.next_sequence() + start;
+	const uint64_t first_missing_sequence = tx.next_sequence(stream) + start;
 
 	packet_plan damaged{
+	        .stream = stream,
 	        .frame_idx = base,
 	        .omitted = contiguous_omission(missing, start),
 	};
 	packet_plan exposing{
+	        .stream = stream,
 	        .frame_idx = base + 1,
 	};
 
@@ -247,15 +251,16 @@ bool run_case(sender & tx,
 	collect(connection, obs, per_scenario_timeout);
 
 	const bool damaged_expected_incomplete = missing > 0;
-	const bool damaged_ok = damaged_expected_incomplete ? feedback_incomplete(obs, base) : feedback_success(obs, base);
-	const bool exposing_ok = feedback_success(obs, base + 1);
-	const bool gap_ok = missing == 0 || gap_covers(obs, first_missing_sequence, missing);
+	const bool damaged_ok = damaged_expected_incomplete ? feedback_incomplete(obs, stream, base) : feedback_success(obs, stream, base);
+	const bool exposing_ok = feedback_success(obs, stream, base + 1);
+	const bool gap_ok = missing == 0 || gap_covers(obs, stream, first_missing_sequence, missing);
 	const bool good = damaged_ok && exposing_ok && gap_ok;
 
 	note(s, good, damaged_expected_incomplete, recorded);
 	if (!good)
 	{
-		U_LOG_W("Helix synthetic transport case failed base=%llu missing=%u start=%u damaged_ok=%d exposing_ok=%d gap_ok=%d feedback=%zu gaps=%zu rtx=%zu",
+		U_LOG_W("Helix synthetic transport case failed stream=%u base=%llu missing=%u start=%u damaged_ok=%d exposing_ok=%d gap_ok=%d feedback=%zu gaps=%zu rtx=%zu",
+		        stream,
 		        static_cast<unsigned long long>(base),
 		        missing,
 		        start,
@@ -286,38 +291,41 @@ int run(wivrn_connection & connection, std::stop_token stop_token)
 
 	sender tx{connection, stop_token};
 	score s;
-	uint64_t frame = 0;
+	std::array<uint64_t, 2> frame{};
 
-	// Warm-up establishes receiver packet-sequence state before any injected gaps.
-	if (!run_case(tx, connection, s, frame, 0, 0, false))
-		++s.catastrophic;
-	frame += 2;
+	// Warm-up establishes independent receiver packet-sequence state for both color streams.
+	for (uint8_t stream = 0; stream < 2; ++stream)
+	{
+		if (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))
+			++s.catastrophic;
+		frame[stream] += 2;
+	}
 
 	for (const auto & event: recorded_events)
 	{
-		// The transport layer models the receiver-visible contiguous erasure. Stream 0
-		// is used here so one decoder state machine remains deterministic; event stream
-		// identity is retained in the log and host corpus metadata.
+		const uint8_t stream = event.stream;
 		const uint16_t missing = std::min<uint16_t>(event.missing, shards_per_frame);
-		const uint16_t start = uint16_t((event.id * 7) % (shards_per_frame - std::min<uint16_t>(missing, shards_per_frame - 1)));
-		U_LOG_I("Helix synthetic recorded event=%u original_stream=%u missing=%u span_ms=%.3f report_ms=%.3f",
+		const uint16_t max_start = uint16_t(std::max<int>(1, shards_per_frame - missing));
+		const uint16_t start = uint16_t((event.id * 7) % max_start);
+		U_LOG_I("Helix synthetic recorded event=%u stream=%u missing=%u span_ms=%.3f report_ms=%.3f",
 		        event.id,
-		        event.stream,
+		        stream,
 		        missing,
 		        event.send_span_ms,
 		        event.report_delay_ms);
-		run_case(tx, connection, s, frame, missing, start, true);
-		frame += 2;
+		run_case(tx, connection, s, stream, frame[stream], missing, start, true);
+		frame[stream] += 2;
 	}
 
 	for (size_t i = 0; i < random_case_count; ++i)
 	{
 		const uint64_t r = mix64(0x48454c4958ULL + i);
+		const uint8_t stream = uint8_t((r >> 32) & 1);
 		const uint16_t missing = uint16_t(r % 61); // 0..60; keeps at least a few shards in most cases
 		const uint16_t max_start = uint16_t(std::max<int>(1, shards_per_frame - missing));
 		const uint16_t start = uint16_t((r >> 16) % max_start);
-		run_case(tx, connection, s, frame, missing, start, false);
-		frame += 2;
+		run_case(tx, connection, s, stream, frame[stream], missing, start, false);
+		frame[stream] += 2;
 	}
 
 	const double good_ratio = s.total ? double(s.good) / double(s.total) : 0.0;

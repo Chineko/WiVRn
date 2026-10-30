@@ -31,6 +31,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
     echo "error: worktree is not clean; refusing to mix prediction-chain source with unrelated changes" >&2
     exit 2
 fi
+head_before="$(git rev-parse HEAD)"
 
 for pair in \
     "${helper}:${expected_helper_blob}" \
@@ -45,7 +46,7 @@ for pair in \
     fi
 done
 
-for command in python3 clang-format cmake git; do
+for command in python3 clang-format cmake git strings; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "error: required command not found: ${command}" >&2
         exit 2
@@ -54,18 +55,23 @@ done
 
 out="${HOME}/helix-prediction-chain-build-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "${out}"
-printf 'branch=%s\nhead_before=%s\n' "${branch}" "$(git rev-parse HEAD)" >"${out}/metadata.txt"
+printf 'branch=%s\nhead_before=%s\n' "${branch}" "${head_before}" >"${out}/metadata.txt"
 
 source_dirty=0
-committed=0
+source_committed=0
 cleanup_on_error() {
     status=$?
     if (( status != 0 )); then
         echo "Helix build gate failed (status ${status}). Evidence: ${out}" >&2
-        if (( source_dirty == 1 && committed == 0 )); then
+        if (( source_dirty == 1 )); then
             git diff -- "${tracked_paths[@]}" >"${out}/failed-source.diff" || true
             git checkout -- "${tracked_paths[@]}" || true
-            echo "Source files restored to the pre-run commit; failed diff preserved at ${out}/failed-source.diff" >&2
+            echo "Uncommitted source restored; failed diff preserved at ${out}/failed-source.diff" >&2
+        elif (( source_committed == 1 )); then
+            git show --format=fuller --stat HEAD >"${out}/failed-source-commit.txt" || true
+            git show --format= --binary HEAD >"${out}/failed-source.diff" || true
+            git reset --hard "${head_before}" >/dev/null || true
+            echo "Failed local source commit rolled back to ${head_before}; commit diff preserved in ${out}" >&2
         fi
     fi
     exit "${status}"
@@ -134,7 +140,20 @@ for marker in \
     fi
 done
 
-echo "[4/6] Building wivrn-server"
+echo "[4/6] Committing exact source before compilation"
+git add -- "${tracked_paths[@]}"
+git commit -m "Helix: prototype bounded prediction-chain invalidation" | tee "${out}/commit.txt"
+source_dirty=0
+source_committed=1
+source_commit="$(git rev-parse HEAD)"
+source_short="${source_commit:0:12}"
+printf 'source_commit=%s\n' "${source_commit}" | tee -a "${out}/metadata.txt"
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "error: worktree is not clean after source commit" >&2
+    exit 2
+fi
+
+echo "[5/6] Building exact committed wivrn-server"
 if [[ ! -f build-server/build.ninja ]]; then
     cmake --preset server 2>&1 | tee "${out}/cmake-configure.txt"
 fi
@@ -145,32 +164,24 @@ set -e
 if (( build_status != 0 )); then
     exit "${build_status}"
 fi
-
 server="$(find build-server -type f -name wivrn-server -perm -111 -print | head -n 1)"
 if [[ -z "${server}" || ! -s "${server}" ]]; then
     echo "error: build completed but nonempty wivrn-server artifact was not found" >&2
     exit 2
 fi
 server="$(realpath "${server}")"
-printf 'server=%s\n' "${server}" | tee -a "${out}/metadata.txt"
-
-echo "[5/6] Committing exact compiled source"
-git add -- "${tracked_paths[@]}"
-git commit -m "Helix: prototype bounded prediction-chain invalidation" | tee "${out}/commit.txt"
-committed=1
-commit="$(git rev-parse HEAD)"
-printf 'source_commit=%s\n' "${commit}" | tee -a "${out}/metadata.txt"
-
-if [[ -n "$(git status --porcelain)" ]]; then
-    echo "error: worktree is not clean after source commit" >&2
+if ! strings "${server}" | grep -Fq "${source_short}"; then
+    echo "error: compiled server does not contain source commit ${source_short}" >&2
     exit 2
 fi
+printf 'server=%s\nserver_commit_marker=%s\n' "${server}" "${source_short}" | tee -a "${out}/metadata.txt"
 
 echo "[6/6] Publishing compiled checkpoint"
 git push origin "HEAD:${expected_branch}" 2>&1 | tee "${out}/push.txt"
+source_committed=0
 
-printf '\nPASS: prediction-chain source compiled, committed, and pushed.\n'
-printf 'commit=%s\n' "${commit}"
+printf '\nPASS: prediction-chain source committed, compiled with matching identity, and pushed.\n'
+printf 'commit=%s\n' "${source_commit}"
 printf 'server=%s\n' "${server}"
 printf 'evidence=%s\n' "${out}"
 printf 'STATUS: built server only; not installed and not runtime-tested.\n'

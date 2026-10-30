@@ -13,7 +13,7 @@ ARTIFACT_GATE="artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source"
 TIMEOUT_SECONDS=240
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git adb aapt sha256sum awk sed grep ip python3 timeout stdbuf tr head systemctl pkill sleep cat; do
+for c in git adb sha256sum awk sed grep ip python3 timeout stdbuf systemctl pkill; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 
@@ -25,6 +25,8 @@ done
 grep -Fqx "source_commit=$SOURCE_COMMIT" "$META" || fail "metadata source mismatch"
 grep -Fqx "remote_head=$SOURCE_COMMIT" "$META" || fail "metadata remote-head mismatch"
 grep -Fqx "$ARTIFACT_GATE" "$META" || fail "artifact gate missing"
+VERSION_NAME="$(sed -n 's/^version_name=//p' "$META" | tail -1)"
+[[ -n "$VERSION_NAME" ]] || fail "metadata version_name missing"
 
 git fetch -q origin "$SOURCE_BRANCH"
 [[ "$(git rev-parse "refs/remotes/origin/$SOURCE_BRANCH")" == "$SOURCE_COMMIT" ]] || fail "remote source branch moved"
@@ -54,35 +56,44 @@ route="$(ip route get "$quest_ip" 2>/dev/null | head -1)"
 echo "$route" | grep -Eq ' dev (lo|usb[^ ]*|rndis[^ ]*|adb[^ ]*) ' && fail "route to Quest is not accepted network path: $route"
 echo "NETWORK_PATH_GATE=PASS quest_wlan0=$quest_ip host_route=$route adb_forward=none adb_reverse=none"
 
-package="$(aapt dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
-version="$(aapt dump badging "$APK" | sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" | head -1)"
-[[ -n "$package" && -n "$version" ]] || fail "could not derive APK package/version"
-
-echo "Quest package=$package version=$version"
+echo "Installing exact Quest APK version=$VERSION_NAME"
 adb install -r "$APK" >/dev/null || fail "APK install failed"
+
+# Identify the exact installed package from Android itself by matching the pinned build version.
+package=""
+while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    got="$(adb shell dumpsys package "$candidate" 2>/dev/null | sed -n 's/^[[:space:]]*versionName=//p' | head -1 | tr -d '\r')"
+    if [[ "$got" == "$VERSION_NAME" ]]; then
+        if [[ -n "$package" && "$package" != "$candidate" ]]; then
+            fail "multiple installed WiVRn packages match version $VERSION_NAME: $package $candidate"
+        fi
+        package="$candidate"
+    fi
+done < <(adb shell pm list packages 2>/dev/null | tr -d '\r' | sed -n 's/^package://p' | grep '^org\.meumeu\.wivrn')
+[[ -n "$package" ]] || fail "installed WiVRn package with version $VERSION_NAME not found"
 installed_version="$(adb shell dumpsys package "$package" 2>/dev/null | sed -n 's/^[[:space:]]*versionName=//p' | head -1 | tr -d '\r')"
-[[ "$installed_version" == "$version" ]] || fail "installed version mismatch: expected=$version got=$installed_version"
+[[ "$installed_version" == "$VERSION_NAME" ]] || fail "installed version mismatch: expected=$VERSION_NAME got=$installed_version"
+echo "Quest package=$package version=$installed_version"
 
 evidence="$HOME/helix-synthetic-network-runtime-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$evidence"
 printf 'source_commit=%s\nserver_sha256=%s\napk_sha256=%s\npackage=%s\nversion=%s\nquest_wlan0=%s\nhost_route=%s\n' \
-    "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$package" "$version" "$quest_ip" "$route" >"$evidence/metadata.txt"
+    "$SOURCE_COMMIT" "$SERVER_SHA256" "$APK_SHA256" "$package" "$installed_version" "$quest_ip" "$route" >"$evidence/metadata.txt"
 
 service_was_active=0
-if systemctl --user is-active --quiet wivrn.service 2>/dev/null; then
-    service_was_active=1
-fi
+systemctl --user is-active --quiet wivrn.service && service_was_active=1 || true
 cleanup(){
     set +e
     [[ -n "${server_pid:-}" ]] && kill "$server_pid" 2>/dev/null
     adb shell am force-stop "$package" >/dev/null 2>&1
-    if [[ "$service_was_active" -eq 1 ]]; then
+    if (( service_was_active )); then
         systemctl --user start wivrn.service >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT INT TERM
 
-# Avoid a competing user service/server, but restore it on exit if it was active.
+# Avoid a competing user service/server, restoring it on exit if it was active.
 systemctl --user stop wivrn.service >/dev/null 2>&1 || true
 pkill -x wivrn-server >/dev/null 2>&1 || true
 sleep 1
@@ -124,18 +135,16 @@ echo "$exit_line" | grep -Fq 'result=0' || fail "synthetic runner exited nonzero
 python3 - "$result_line" <<'PY'
 import re, sys
 line=sys.argv[1]
-keys=['pass','total','good','good_ratio','fallback_total','fallback_good','fallback_ratio','recorded_total','recorded_good','recorded_ratio','envelope_total','envelope_good','envelope_ratio','ordering_total','ordering_good','ordering_ratio','rtx_total','rtx_good','rtx_ratio','catastrophic']
-vals={k:v for k,v in re.findall(r'([A-Za-z_]+)=([0-9.]+)', line) if k in keys}
-missing=[k for k in keys if k not in vals]
+vals=dict(re.findall(r'(pass|good_ratio|fallback_ratio|recorded_total|recorded_good|recorded_ratio|envelope_ratio|ordering_ratio|rtx_ratio|catastrophic)=([0-9.]+)', line))
+required=['pass','good_ratio','fallback_ratio','recorded_total','recorded_good','recorded_ratio','envelope_ratio','ordering_ratio','rtx_ratio','catastrophic']
+missing=[k for k in required if k not in vals]
 if missing:
     raise SystemExit('FAIL: result fields missing: '+','.join(missing))
 for k in ['good_ratio','fallback_ratio','recorded_ratio','envelope_ratio','ordering_ratio','rtx_ratio']:
     if float(vals[k]) < 0.95:
         raise SystemExit(f'FAIL: {k}={vals[k]} below 0.95')
-if int(vals['recorded_total']) != 10:
-    raise SystemExit('FAIL: recorded corpus total='+vals['recorded_total']+' expected 10')
-if int(vals['recorded_good']) != 10:
-    raise SystemExit('FAIL: recorded corpus not clean: '+vals['recorded_good']+'/10')
+if int(float(vals['recorded_total'])) != 10 or int(float(vals['recorded_good'])) != 10:
+    raise SystemExit(f"FAIL: recorded corpus {vals['recorded_good']}/{vals['recorded_total']} expected 10/10")
 if int(float(vals['catastrophic'])) != 0:
     raise SystemExit('FAIL: catastrophic='+vals['catastrophic'])
 if vals['pass'] != '1':

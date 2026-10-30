@@ -87,12 +87,12 @@ patched=Path(sys.argv[1]); orig=Path(sys.argv[2]).read_text()
 source,build_root,server_sha,apk_sha,version,gate=sys.argv[3:]
 s=patched.read_text()
 repls=[
-('     \'SOURCE_COMMIT="951ce95cd2ea14bf34e099d2b7e56f272d05cdac"\',', f'     \'SOURCE_COMMIT="{source}"\','),
-('     \'BUILD_ROOT="$HOME/helix-encoded-nvenc-fix-v3-build-20261030-185452"\',', f'     \'BUILD_ROOT="{build_root}"\','),
-('     \'APK="$BUILD_ROOT/helix-encoded-nvenc-fix-v3-951ce95cd2ea.apk"\',', '     \'APK="$BUILD_ROOT/helix-synthetic-network-promotion-v1-6e23563ec49c.apk"\','),
-('     \'SERVER_SHA256="1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af"\',', f'     \'SERVER_SHA256="{server_sha}"\','),
-('     \'APK_SHA256="1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c"\',', f'     \'APK_SHA256="{apk_sha}"\','),
-('     \'VERSION_NAME="helix-encoded-fix-v3-951ce95cd2ea14bf34e099d2b7e56f272d05cdac"\',', f'     \'VERSION_NAME="{version}"\','),
+('\'SOURCE_COMMIT="951ce95cd2ea14bf34e099d2b7e56f272d05cdac"\',', f'\'SOURCE_COMMIT="{source}"\','),
+('\'BUILD_ROOT="$HOME/helix-encoded-nvenc-fix-v3-build-20261030-185452"\',', f'\'BUILD_ROOT="{build_root}"\','),
+('\'APK="$BUILD_ROOT/helix-encoded-nvenc-fix-v3-951ce95cd2ea.apk"\',', '\'APK="$BUILD_ROOT/helix-synthetic-network-promotion-v1-6e23563ec49c.apk"\','),
+('\'SERVER_SHA256="1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af"\',', f'\'SERVER_SHA256="{server_sha}"\','),
+('\'APK_SHA256="1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c"\',', f'\'APK_SHA256="{apk_sha}"\','),
+('\'VERSION_NAME="helix-encoded-fix-v3-951ce95cd2ea14bf34e099d2b7e56f272d05cdac"\',', f'\'VERSION_NAME="{version}"\','),
 ("new_gate='artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source'", f"new_gate={gate!r}"),
 ("grep -Fq '951ce95cd2ea14bf34e099d2b7e56f272d05cdac' \"$tmp\" || { echo \"FAIL: v3 source binding missing\" >&2; exit 2; }", f"grep -Fq '{source}' \"$tmp\" || {{ echo \"FAIL: promotion source binding missing\" >&2; exit 2; }}"),
 ("grep -Fq '1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af' \"$tmp\" || { echo \"FAIL: v3 server hash binding missing\" >&2; exit 2; }", f"grep -Fq '{server_sha}' \"$tmp\" || {{ echo \"FAIL: promotion server hash binding missing\" >&2; exit 2; }}"),

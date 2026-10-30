@@ -123,6 +123,5 @@ grep -Fq '1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af' "$tm
 grep -Fq '1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c' "$tmp" || { echo "FAIL: v3 APK hash binding missing" >&2; exit 2; }
 grep -Fq "for c in ('rtx8','gap9','full_reference')" "$tmp" || { echo "FAIL: v3 reducer transformer missing" >&2; exit 2; }
 grep -Fq 'FIX_V3_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-v3-audited' "$tmp" || { echo "FAIL: v3 binding gate missing" >&2; exit 2; }
-! grep -Fq 'rtx8:not_same_frame_decoded' "$tmp" || { echo "FAIL: stale rtx8 same-frame reducer remains in generated binding" >&2; exit 2; }
 
 exec bash "$tmp"

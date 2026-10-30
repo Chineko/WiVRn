@@ -1,0 +1,48 @@
+diff --git a/server/encoder/video_encoder.cpp b/server/encoder/video_encoder.cpp
+index 7613a718..00000000 100644
+--- a/server/encoder/video_encoder.cpp
++++ b/server/encoder/video_encoder.cpp
+@@ -271,6 +271,11 @@ void helix_log_pacing_summary(video_encoder * encoder)
+ }
+ } // namespace
+ 
++void helix_encoded_note_feedback_for_nvenc(const from_headset::feedback & feedback)
++{
++	helix_encoded_note_feedback(feedback);
++}
++
+ video_encoder::sender::sender() :
+         thread([this](std::stop_token t) {
+ 	        while (not t.stop_requested())
+@@ -1084,7 +1089,10 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
+ 	if (video_dump)
+ 		video_dump.write((char *)data.data(), data.size());
+ 
+-	ssize_t max_payload_size = (cnx->has_stream() and not control) ? to_headset::video_stream_data_shard::max_payload_size : std::numeric_limits<uint32_t>::max();
++	const bool helix_force_torture_fragmentation = encoded_case == helix_encoded_case::rtx8 || encoded_case == helix_encoded_case::gap9;
++	ssize_t max_payload_size = ((cnx->has_stream() || helix_force_torture_fragmentation) and not control)
++	                                   ? to_headset::video_stream_data_shard::max_payload_size
++	                                   : std::numeric_limits<uint32_t>::max();
+ 
+ 	auto begin = data.begin();
+ 	auto end = data.end();
+diff --git a/server/encoder/video_encoder_nvenc.cpp b/server/encoder/video_encoder_nvenc.cpp
+index 00000000..00000000 100644
+--- a/server/encoder/video_encoder_nvenc.cpp
++++ b/server/encoder/video_encoder_nvenc.cpp
+@@ -69,6 +69,8 @@ namespace wivrn
+ {
+ 
++void helix_encoded_note_feedback_for_nvenc(const from_headset::feedback & feedback);
++
+ static auto encode_guid(video_codec codec)
+ {
+ 	switch (codec)
+@@ -135,6 +137,7 @@ void video_encoder_nvenc::set_init_params_fps(float framerate)
+ 
+ void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
+ {
++	helix_encoded_note_feedback_for_nvenc(feedback);
+ 	auto & idr_handler = static_cast<default_idr_handler &>(*idr);
+ 	if (!feedback.sent_to_decoder && helix_ref_invalidation_supported)
+ 	{

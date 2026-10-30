@@ -153,7 +153,7 @@ struct helix_encoded_record
 struct helix_encoded_state
 {
 	std::mutex mutex;
-	uint8_t next_case = 0;
+	uint32_t next_case = 0;
 	uint64_t last_injected_frame = 0;
 	std::unordered_map<uint64_t, helix_encoded_record> records;
 	std::optional<uint64_t> awaiting_recovery;
@@ -168,6 +168,36 @@ bool helix_encoded_torture_enabled()
 		return value && std::string_view(value) == "1";
 	}();
 	return enabled;
+}
+
+uint32_t helix_encoded_torture_cycles()
+{
+	static const uint32_t cycles = [] {
+		const char * value = std::getenv("HELIX_ENCODED_TORTURE_CYCLES");
+		if (!value || !*value)
+			return 1u;
+		char * end = nullptr;
+		auto parsed = std::strtoul(value, &end, 10);
+		if (!end || *end != '\0' || parsed == 0 || parsed > 1000)
+			return 1u;
+		return static_cast<uint32_t>(parsed);
+	}();
+	return cycles;
+}
+
+uint64_t helix_encoded_torture_spacing_frames()
+{
+	static const uint64_t spacing = []() -> uint64_t {
+		const char * value = std::getenv("HELIX_ENCODED_TORTURE_SPACING_FRAMES");
+		if (!value || !*value)
+			return 20;
+		char * end = nullptr;
+		auto parsed = std::strtoull(value, &end, 10);
+		if (!end || *end != '\0' || parsed < 20 || parsed > 1000000)
+			return 20;
+		return static_cast<uint64_t>(parsed);
+	}();
+	return spacing;
 }
 
 void helix_encoded_note_feedback(const from_headset::feedback & feedback)
@@ -1032,7 +1062,7 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 		{
 			encoded_case = existing->second.scenario;
 		}
-		else if (shard.shard_idx == 0 && !control && helix_encoded_torture.next_case < 3)
+		else if (shard.shard_idx == 0 && !control && helix_encoded_torture.next_case < helix_encoded_torture_cycles() * 3u)
 		{
 			auto * handler = dynamic_cast<default_idr_handler *>(idr.get());
 			const bool reference_p = handler && !handler->is_non_ref_frame(shard.frame_idx);
@@ -1040,11 +1070,11 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 			                           (helix_encoded_torture.records.contains(helix_encoded_torture.last_injected_frame) &&
 			                            helix_encoded_torture.records.at(helix_encoded_torture.last_injected_frame).recovered);
 			const bool spacing_ok = helix_encoded_torture.last_injected_frame == 0 ||
-			                        shard.frame_idx >= helix_encoded_torture.last_injected_frame + 20;
+			                        shard.frame_idx >= helix_encoded_torture.last_injected_frame + helix_encoded_torture_spacing_frames();
 			if (reference_p && previous_done && spacing_ok && shard.frame_idx >= 30)
 			{
 				helix_encoded_case candidate = helix_encoded_case::none;
-				switch (helix_encoded_torture.next_case)
+				switch (helix_encoded_torture.next_case % 3u)
 				{
 					case 0:
 						candidate = helix_encoded_case::rtx8;

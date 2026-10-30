@@ -208,6 +208,36 @@ bool gap_covers(const observation & obs, uint8_t stream, uint64_t first, uint64_
 	});
 }
 
+bool oracle_self_test()
+{
+	observation obs;
+	from_headset::feedback complete{};
+	complete.stream_index = 0;
+	complete.frame_index = 7;
+	complete.sent_to_decoder = 1;
+	obs.feedback[{0, 7}] = complete;
+
+	from_headset::feedback incomplete{};
+	incomplete.stream_index = 1;
+	incomplete.frame_index = 9;
+	incomplete.sent_to_decoder = 0;
+	obs.feedback[{1, 9}] = incomplete;
+
+	obs.gaps.push_back(from_headset::video_gap_report{
+	        .stream_index = 1,
+	        .first_missing_sequence = 100,
+	        .missing_count = 5,
+	        .exposing_sequence = 105,
+	        .exposing_frame_idx = 9,
+	});
+
+	const bool accepts_expected = feedback_success(obs, 0, 7) && feedback_incomplete(obs, 1, 9) && gap_covers(obs, 1, 101, 3);
+	const bool rejects_mutations = !feedback_success(obs, 1, 7) && !feedback_success(obs, 1, 9) &&
+	                               !feedback_incomplete(obs, 0, 7) && !gap_covers(obs, 0, 101, 3) &&
+	                               !gap_covers(obs, 1, 99, 6) && !gap_covers(obs, 1, 104, 2);
+	return accepts_expected && rejects_mutations;
+}
+
 void note(score & s, bool good, bool fallback, bool recorded)
 {
 	++s.total;
@@ -278,6 +308,11 @@ bool run_case(sender & tx,
 
 int run(wivrn_connection & connection, std::stop_token stop_token)
 {
+	const bool oracle_ok = oracle_self_test();
+	U_LOG_I("HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d", oracle_ok);
+	if (!oracle_ok)
+		return 2;
+
 	U_LOG_I("Helix synthetic transport: starting bounded Quest receiver battery");
 
 	connection.send_control(to_headset::video_stream_description{

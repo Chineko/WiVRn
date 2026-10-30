@@ -38,14 +38,17 @@ if len(bad) != 65:
 if len(good) != 64:
     raise SystemExit(f'FAIL: authoritative digest length {len(good)}')
 n=s.count(bad)
-if n != 2:
-    raise SystemExit(f'FAIL: bad binary hash occurrence count={n}, expected=2')
-s=s.replace(bad,good)
+if n != 1:
+    raise SystemExit(f'FAIL: bad binary hash occurrence count={n}, expected=1')
+s=s.replace(bad,good,1)
 p.write_text(s)
 PY
 
 bash -n "$RUNNER" || fail "repaired 5-minute runner syntax invalid"
 grep -Fqx "VULKAN_BINARY_SHA256=\"$GOOD_BINARY_SHA\"" "$RUNNER" || fail "repaired runner binary hash binding missing"
 ! grep -Fq "$BAD_BINARY_SHA" "$RUNNER" || fail "bad 65-character binary hash remains"
+ACTUAL_RUNNER_BINARY_SHA="$(awk -F'"' '/^VULKAN_BINARY_SHA256=/ {print $2}' "$RUNNER")"
+[[ "$ACTUAL_RUNNER_BINARY_SHA" == "$GOOD_BINARY_SHA" ]] || fail "runner binary binding differs from authoritative metadata"
+[[ "$(sha256sum "$BIN" | awk '{print $1}')" == "$ACTUAL_RUNNER_BINARY_SHA" ]] || fail "runner binary binding does not match actual binary"
 RUNNER_SHA="$(sha256sum "$RUNNER" | awk '{print $1}')"
 printf 'PASS: repaired deterministic 5-minute sustained runner.\nauthoritative_binary_sha256=%s\nrunner=%s\nrunner_sha256=%s\nframes=27000\ncycles=30\nspacing=300\nexpected=90\ndriver_timeout_seconds=420\n' "$GOOD_BINARY_SHA" "$RUNNER" "$RUNNER_SHA"

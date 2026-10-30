@@ -44,18 +44,32 @@ c=c.replace('#include <thread>\n', '#include <thread>\n#include <type_traits>\n'
 c=c.replace('std::vector<XrExtensionProperties> exts(ext_count, {XR_TYPE_EXTENSION_PROPERTIES});', 'std::vector<XrExtensionProperties> exts(ext_count);\n    for (auto & ext : exts) ext.type = XR_TYPE_EXTENSION_PROPERTIES;')
 c=c.replace('std::strncpy(ici.applicationInfo.applicationName, "Helix Headless Driver", XR_MAX_APPLICATION_NAME_SIZE - 1);', 'std::snprintf(ici.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE, "%s", "Helix Headless Driver");')
 c=c.replace('std::strncpy(ici.applicationInfo.engineName, "Helix", XR_MAX_ENGINE_NAME_SIZE - 1);', 'std::snprintf(ici.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "%s", "Helix");')
-# OpenXR headers intentionally use C aggregate structs. Under -Werror,
-# Type var{XR_TYPE_*} triggers -Wmissing-field-initializers in C++.
-# Zero-initialize the whole struct and assign .type explicitly instead.
-pat=re.compile(r'(?m)^(\s*)(Xr[A-Za-z0-9_]+)\s+([A-Za-z_][A-Za-z0-9_]*)\{(XR_TYPE_[A-Z0-9_]+)\};$')
-def repl(m):
+
+# OpenXR headers intentionally expose C aggregate structs. Under -Werror,
+# both declarations (XrFoo x{XR_TYPE_*}) and reassignments
+# (x = {XR_TYPE_*}) trigger -Wmissing-field-initializers in C++.
+# Zero the whole object and assign .type explicitly in both forms.
+decl_pat=re.compile(r'(?m)^(\s*)(Xr[A-Za-z0-9_]+)\s+([A-Za-z_][A-Za-z0-9_]*)\{(XR_TYPE_[A-Z0-9_]+)\};$')
+def decl_repl(m):
     indent, typ, var, xrtype = m.groups()
     return f'{indent}{typ} {var}{{}};\n{indent}{var}.type = {xrtype};'
-c,n=pat.subn(repl,c)
-if n < 8:
-    raise SystemExit(f'error: expected to rewrite OpenXR aggregate initializers, got {n}')
-if re.search(r'Xr[A-Za-z0-9_]+\s+[A-Za-z_][A-Za-z0-9_]*\{XR_TYPE_[A-Z0-9_]+\};', c):
-    raise SystemExit('error: stale OpenXR aggregate initializer remains')
+c,decl_n=decl_pat.subn(decl_repl,c)
+if decl_n < 8:
+    raise SystemExit(f'error: expected to rewrite OpenXR declaration initializers, got {decl_n}')
+
+assign_pat=re.compile(r'(?m)^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{(XR_TYPE_[A-Z0-9_]+)\};$')
+def assign_repl(m):
+    indent, var, xrtype = m.groups()
+    return f'{indent}{var} = {{}};\n{indent}{var}.type = {xrtype};'
+c,assign_n=assign_pat.subn(assign_repl,c)
+if assign_n < 2:
+    raise SystemExit(f'error: expected to rewrite OpenXR reassignment initializers, got {assign_n}')
+
+# Whole generated-source guard: no warning-prone XR_TYPE aggregate form may survive.
+if re.search(r'(?m)^\s*Xr[A-Za-z0-9_]+\s+[A-Za-z_][A-Za-z0-9_]*\s*\{XR_TYPE_[A-Z0-9_]+\};\s*$', c):
+    raise SystemExit('error: stale OpenXR declaration aggregate initializer remains')
+if re.search(r'(?m)^\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*\{XR_TYPE_[A-Z0-9_]+\};\s*$', c):
+    raise SystemExit('error: stale OpenXR reassignment aggregate initializer remains')
 Path(sys.argv[2]).write_text(c)
 PY
 hdr=""; for root in /usr/include build-everything .; do [[ -e "$root" ]] || continue; hdr="$(find "$root" -type f -path '*/openxr/openxr.h' -print -quit 2>/dev/null || true)"; [[ -n "$hdr" ]] && break; done

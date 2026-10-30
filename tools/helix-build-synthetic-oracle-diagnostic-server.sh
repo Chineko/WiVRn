@@ -8,7 +8,7 @@ TRANSFORM_PATH="tools/helix-apply-synthetic-oracle-diagnostics.py"
 OUT_BRANCH="helix-synthetic-network-oracle-diag"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git python3 cmake sha256sum awk grep realpath; do
+for c in git python3 cmake sha256sum awk grep realpath cp; do
   command -v "$c" >/dev/null 2>&1 || fail "missing command $c"
 done
 
@@ -54,9 +54,14 @@ source_commit="$(git rev-parse HEAD)"
 
 cmake --preset server 2>&1 | tee "$out/configure.txt"
 cmake --build build-server --target wivrn-server -j 2 2>&1 | tee "$out/build.txt"
-server="$(realpath build-server/server/wivrn-server)"
-[[ -x "$server" && -s "$server" ]] || fail "diagnostic server missing"
+built_server="$(realpath build-server/server/wivrn-server)"
+[[ -x "$built_server" && -s "$built_server" ]] || fail "diagnostic server missing"
+server="$out/wivrn-server"
+cp "$built_server" "$server"
+chmod +x "$server"
+[[ -x "$server" && -s "$server" ]] || fail "persistent diagnostic server copy missing"
 server_sha="$(sha256sum "$server" | awk '{print $1}')"
+[[ "$(sha256sum "$built_server" | awk '{print $1}')" == "$server_sha" ]] || fail "persistent diagnostic server hash mismatch"
 
 git push --force-with-lease="refs/heads/$OUT_BRANCH:$remote_expected" origin "HEAD:$OUT_BRANCH" 2>&1 | tee "$out/push.txt"
 remote_head="$(git ls-remote origin "refs/heads/$OUT_BRANCH" | awk '{print $1}')"

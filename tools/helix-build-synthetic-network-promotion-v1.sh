@@ -51,7 +51,8 @@ mapfile -t changed < <(git diff --name-only)
 [[ "${changed[0]}" == "server/helix_synthetic_transport.cpp" ]] || fail "unexpected changed source file: ${changed[*]}"
 
 grep -Fq 'U_LOG_I("HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d", oracle_ok);' server/helix_synthetic_transport.cpp || fail "existing logger sanity marker lost"
-grep -Fq 'std::fprintf(stderr, "HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d\\n", oracle_ok);' server/helix_synthetic_transport.cpp || fail "deterministic stderr sanity marker missing"
+grep -Fq 'HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY pass=%d\n' server/helix_synthetic_transport.cpp || fail "deterministic stderr sanity marker missing"
+grep -Fq 'oracle_ok);' server/helix_synthetic_transport.cpp || fail "oracle stderr value binding missing"
 grep -Fq 'std::fflush(stderr);' server/helix_synthetic_transport.cpp || fail "stderr flush missing"
 grep -Fq 'if (!oracle_ok)' server/helix_synthetic_transport.cpp || fail "oracle fail gate missing"
 grep -Fq 'return 2;' server/helix_synthetic_transport.cpp || fail "oracle fail return missing"

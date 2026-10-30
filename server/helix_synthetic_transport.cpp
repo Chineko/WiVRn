@@ -123,6 +123,14 @@ to_headset::video_stream_data_shard::view_info_t make_view_info()
 		fov.angleUp = 0.8f;
 		fov.angleDown = -0.8f;
 	}
+	// A single region is valid foveation metadata and represents a 1:1 mapping.
+	// The Quest renderer derives its swapchain extent from these vectors, so the
+	// synthetic raw stream must describe the actual per-eye frame dimensions.
+	for (auto & foveation: view.foveation)
+	{
+		foveation.x = {width};
+		foveation.y = {height};
+	}
 	view.alpha = false;
 	return view;
 }

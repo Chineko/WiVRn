@@ -336,6 +336,14 @@ int run(wivrn_connection & connection, std::stop_token stop_token)
 		frame[stream] += 2;
 	}
 
+	// Dominant historical failure class: the entire encoded frame disappears before
+	// Quest wlan0. Exercise a literal 64/64-shard erasure on both production streams.
+	for (uint8_t stream = 0; stream < 2; ++stream)
+	{
+		run_case(tx, connection, s, stream, frame[stream], shards_per_frame, 0, false);
+		frame[stream] += 2;
+	}
+
 	for (const auto & event: recorded_events)
 	{
 		const uint8_t stream = event.stream;

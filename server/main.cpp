@@ -26,6 +26,7 @@
  */
 
 #include "application.h"
+#include "helix_synthetic_transport.h"
 #include "sleep_inhibitor.h"
 #include "util/u_trace_marker.h"
 
@@ -48,6 +49,7 @@
 #include "wivrn_server_dbus.h"
 
 #include <CLI/CLI.hpp>
+#include <atomic>
 #include <avahi-glib/glib-watch.h>
 #include <chrono> // IWYU pragma: keep
 #include <cstdint>
@@ -200,6 +202,9 @@ guint server_watch;
 guint server_kill_watch;
 pid_t server_pid;
 std::optional<std::jthread> connection_thread;
+std::optional<std::jthread> helix_synthetic_thread;
+bool helix_synthetic_transport_enabled = false;
+std::atomic<int> helix_synthetic_result{-1};
 
 std::unique_ptr<children_manager> children;
 
@@ -441,6 +446,33 @@ gboolean headset_connected_success(void *)
 
 	expose_known_keys_on_dbus();
 
+	delay_next_try = default_delay_next_try;
+
+	if (helix_synthetic_transport_enabled)
+	{
+		std::cerr << "Helix synthetic transport mode: starting bounded receiver battery" << std::endl;
+		helix_synthetic_thread.emplace([](std::stop_token stop_token) {
+			int result = 1;
+			try
+			{
+				result = wivrn::helix_synthetic_transport::run(*connection, stop_token);
+			}
+			catch (const std::exception & e)
+			{
+				std::cerr << "Helix synthetic transport failed: " << e.what() << std::endl;
+			}
+
+			helix_synthetic_result.store(result, std::memory_order_release);
+			g_main_context_invoke(nullptr, [](void *) -> gboolean {
+				const int result = helix_synthetic_result.load(std::memory_order_acquire);
+				std::cerr << "HELIX_SYNTHETIC_TRANSPORT_EXIT result=" << result << std::endl;
+				quitting_main_loop = true;
+				g_main_loop_quit(main_loop);
+				return G_SOURCE_REMOVE; }, nullptr);
+		});
+		return G_SOURCE_REMOVE;
+	}
+
 	configuration c;
 	start_server(c);
 	try
@@ -451,8 +483,6 @@ gboolean headset_connected_success(void *)
 	{
 		std::cerr << "Failed to start application: " << e.what() << std::endl;
 	}
-
-	delay_next_try = default_delay_next_try;
 
 	connection.reset();
 	return G_SOURCE_REMOVE;
@@ -1004,7 +1034,15 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 	// Main loop
 	g_main_loop_run(main_loop);
 
-	// Cleanup
+	// Cleanup. Join the bounded synthetic worker before releasing its connection.
+	if (helix_synthetic_thread)
+	{
+		helix_synthetic_thread->request_stop();
+		helix_synthetic_thread.reset();
+	}
+	if (helix_synthetic_transport_enabled)
+		::connection.reset();
+
 	notify_uninit();
 	runtime_setter.reset();
 	stop_publishing();
@@ -1014,6 +1052,11 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 
 	std::error_code ec;
 	std::filesystem::remove(socket_path(), ec);
+
+	if (helix_synthetic_transport_enabled)
+		return helix_synthetic_result.load(std::memory_order_acquire) == 0
+		               ? int(wivrn_exit_code::success)
+			       : int(wivrn_exit_code::unknown_error);
 
 	return wivrn_exit_code::success;
 }
@@ -1031,6 +1074,7 @@ int main(int argc, char * argv[])
 	auto no_fork = app.add_flag("--no-fork")->description("disable fork to serve connection")->group("Debug");
 	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through avahi");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
+	auto helix_synthetic_transport = app.add_flag("--helix-synthetic-transport")->description("run bounded Helix Quest synthetic transport validation instead of starting Monado")->group("Debug");
 #if WIVRN_FEATURE_DEBUG_GUI
 	auto debug_gui = app.add_flag("--debug-gui")->description("show the debug GUI")->group("Debug");
 #endif
@@ -1055,6 +1099,17 @@ int main(int argc, char * argv[])
 		do_active_runtime = not *no_active_runtime;
 
 	do_fork = not *no_fork;
+	helix_synthetic_transport_enabled = bool(*helix_synthetic_transport);
+	if (helix_synthetic_transport_enabled)
+	{
+		if (*early_active_runtime)
+		{
+			std::cerr << "--helix-synthetic-transport is incompatible with --early-active-runtime" << std::endl;
+			return 2;
+		}
+		do_active_runtime = false;
+		do_fork = false;
+	}
 	if (*no_encrypt)
 		enc_state = wivrn_connection::encryption_state::disabled;
 

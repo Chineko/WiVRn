@@ -101,6 +101,7 @@ if (WIVRN_BUILD_SERVER)
 			avahi_publisher.cpp
 			hostname.cpp
 			main.cpp
+			helix_synthetic_transport.cpp
 			sleep_inhibitor.cpp
 			start_application.cpp
 			start_systemd_unit.cpp

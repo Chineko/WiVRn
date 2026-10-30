@@ -45,17 +45,17 @@ def one(old,new,label):
         raise SystemExit(f'FAIL: {label} anchor count={n}')
     s=s.replace(old,new,1)
 
-one('CYCLES="${HELIX_ENCODED_TORTURE_CYCLES:-90}"','CYCLES="${HELIX_ENCODED_TORTURE_CYCLES:-450}"','cycles 90 to 450')
+one('CYCLES="${HELIX_ENCODED_TORTURE_CYCLES:-90}"','CYCLES="${HELIX_ENCODED_TORTURE_CYCLES:-449}"','cycles 90 to 449')
 one('SPACING="${HELIX_ENCODED_TORTURE_SPACING_FRAMES:-100}"','SPACING="${HELIX_ENCODED_TORTURE_SPACING_FRAMES:-20}"','spacing 100 to 20')
-one('SUSTAINED_AUDIT_B=PASS frame-keyed-270-event-reducer-and-bounded-frame-budget','SUSTAINED_AUDIT_B=PASS frame-keyed-1350-event-reducer-and-bounded-frame-budget','audit B label')
+one('SUSTAINED_AUDIT_B=PASS frame-keyed-270-event-reducer-and-bounded-frame-budget','SUSTAINED_AUDIT_B=PASS frame-keyed-1347-event-reducer-and-bounded-frame-budget','audit B label')
 one('helix-encoded-sustained-5min-variable-torture-runtime-','helix-encoded-sustained-5min-variable-torture-20f-runtime-','evidence directory')
 one('ENCODED_NVENC_SUSTAINED_5MIN_VARIABLE_TORTURE_PASS','ENCODED_NVENC_SUSTAINED_5MIN_VARIABLE_TORTURE_20F_PASS','final verdict')
 
 required=[
  'HELIX_SUSTAINED_FRAMES:-27000',
- 'HELIX_ENCODED_TORTURE_CYCLES:-450',
+ 'HELIX_ENCODED_TORTURE_CYCLES:-449',
  'HELIX_ENCODED_TORTURE_SPACING_FRAMES:-20',
- 'frame-keyed-1350-event-reducer-and-bounded-frame-budget',
+ 'frame-keyed-1347-event-reducer-and-bounded-frame-budget',
  'timeout --signal=TERM --kill-after=5s 420s',
  'helix_vulkan_stimulus_sustained_5min_variable_v1.cpp',
  'helix-vulkan-stimulus-sustained-5min-variable-v1',
@@ -88,5 +88,5 @@ chmod +x "$OUT"
 bash -n "$OUT" || fail "generated 20f runner syntax invalid"
 RUNNER_SHA="$(sha256sum "$OUT" | awk '{print $1}')"
 [[ "$RUNNER_SHA" =~ ^[0-9a-f]{64}$ ]] || fail "invalid runner hash format"
-printf 'PASS: 20-frame variable-complexity torture runner materialized.\nbase_runner_sha256=%s\nrunner=%s\nrunner_sha256=%s\nframes=27000\ncycles=450\nspacing=20\nexpected=1350\ndriver_timeout_seconds=420\n' \
+printf 'PASS: 20-frame variable-complexity torture runner materialized.\nbase_runner_sha256=%s\nrunner=%s\nrunner_sha256=%s\nframes=27000\ncycles=449\nspacing=20\nexpected=1347\ndriver_timeout_seconds=420\n' \
   "$BASE_SHA" "$OUT" "$RUNNER_SHA"

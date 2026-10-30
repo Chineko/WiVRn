@@ -6,7 +6,7 @@ PINNED_NETWORK_RUNNER_PATH="tools/helix-run-encoded-nvenc-torture-network-promot
 START_DELAY="${HELIX_START_DELAY:-20}"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git bash python3 mktemp grep cp; do
+for c in git bash python3 mktemp grep cp cmp; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 [[ "$START_DELAY" =~ ^[0-9]+$ ]] || fail "HELIX_START_DELAY must be a nonnegative integer"
@@ -18,7 +18,9 @@ trap 'rm -f "$orig" "$runner"' EXIT INT TERM
 
 git cat-file -e "${PINNED_NETWORK_RUNNER_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$PINNED_NETWORK_RUNNER_COMMIT"
 git show "${PINNED_NETWORK_RUNNER_COMMIT}:${PINNED_NETWORK_RUNNER_PATH}" >"$orig"
+[[ -s "$orig" ]] || fail "pinned network runner unavailable"
 cp "$orig" "$runner"
+cmp -s "$orig" "$runner" || fail "pinned network runner copy mismatch"
 
 python3 - "$runner" "$orig" "$START_DELAY" <<'PY'
 from pathlib import Path
@@ -72,7 +74,6 @@ print('SPATIAL_WRAPPER_COMPOSITION_AUDIT=PASS pinned-network-runner-plus-single-
 PY
 
 bash -n "$runner"
-grep -Fq "$PINNED_NETWORK_RUNNER_COMMIT" "$runner" || fail "pinned network runner commit missing"
 grep -Fq 'SPATIAL_UNPLUG_GATE=READY trusted-quest-connected network-path-proven unplug-usb-now' "$runner" || fail "unplug gate missing"
 grep -Fq "SPATIAL_START_DELAY seconds=" "$runner" || fail "delay marker missing"
 echo "SPATIAL_UNPLUG_WRAPPER_AUDIT=PASS pinned_runner=$PINNED_NETWORK_RUNNER_COMMIT delay=${START_DELAY}s semantics-unchanged"

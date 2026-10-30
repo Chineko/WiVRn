@@ -23,7 +23,6 @@ for c in git adb sha256sum awk grep ip python3 bash tr head cp mktemp; do
     command -v "$c" >/dev/null 2>&1 || fail "missing command: $c"
 done
 
-# Artifact/provenance gate before any headset runtime action.
 for f in "$META" "$SERVER" "$MANIFEST" "$APK"; do [[ -s "$f" ]] || fail "artifact missing: $f"; done
 [[ -x "$SERVER" ]] || fail "server is not executable"
 [[ "$(sha256sum "$SERVER" | awk '{print $1}')" == "$SERVER_SHA256" ]] || fail "server hash mismatch"
@@ -42,12 +41,10 @@ grep -Fqx "$ARTIFACT_GATE" "$META" || fail "artifact gate missing"
 git fetch -q origin "$SOURCE_BRANCH"
 [[ "$(git rev-parse "refs/remotes/origin/$SOURCE_BRANCH")" == "$SOURCE_COMMIT" ]] || fail "promotion source branch moved"
 
-# Source semantics gate: encoded torture semantics must still be present on promotion source.
 git show "$SOURCE_COMMIT:server/encoder/video_encoder.cpp" | grep -Fq 'helix_force_torture_fragmentation' || fail "encoded fragmentation fix missing"
 git show "$SOURCE_COMMIT:server/encoder/video_encoder.cpp" | grep -Fq 'record.recovery_frame <= record.frame || record.recovery_frame - record.frame > 3' || fail "encoded fresh recovery semantic missing"
 git show "$SOURCE_COMMIT:server/encoder/video_encoder.cpp" | grep -Fq 'HELIX_ENCODED_TORTURE_SUMMARY' || fail "encoded torture summary missing"
 
-# Network path proof. ADB is control-plane only; refuse any adb tunnel and USB/RNDIS route.
 adb get-state >/dev/null 2>&1 || fail "Quest not visible to adb"
 SERIAL="$(adb get-serialno | tr -d '\r')"
 [[ -n "$SERIAL" && "$SERIAL" != unknown ]] || fail "ADB serial unavailable"
@@ -64,7 +61,6 @@ HOST_IP="$(printf '%s\n' "$ROUTE" | awk '{for(i=1;i<=NF;i++) if($i=="src" && !fo
 [[ -n "$HOST_IP" ]] || fail "host route source missing"
 echo "ENCODED_NETWORK_PATH_GATE=PASS quest_wlan0=$QUEST_IP host_route=$ROUTE host_ip=$HOST_IP adb_forward=none adb_reverse=none"
 
-# Audit the pinned encoded runner's actual transport contract before composing it.
 git cat-file -e "${PINNED_DIRECT_RUNNER_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$PINNED_DIRECT_RUNNER_COMMIT"
 DIRECT="$(mktemp)"
 PATCHED="$(mktemp)"
@@ -76,7 +72,6 @@ grep -Fq 'ip -4 route get "$QUEST_IP"' "$DIRECT" || fail "encoded runner does no
 grep -Fq 'wivrn+tcp://${HOST_IP}' "$DIRECT" || fail "encoded runner does not launch explicit LAN URI"
 grep -Fq 'export HELIX_ENCODED_TORTURE=1' "$DIRECT" || fail "encoded torture enable missing"
 
-# Compose by changing only contextual artifact-identity anchors in the exact previously-passing v3 launcher.
 git cat-file -e "${PINNED_ENCODED_LAUNCHER_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$PINNED_ENCODED_LAUNCHER_COMMIT"
 git show "${PINNED_ENCODED_LAUNCHER_COMMIT}:${PINNED_ENCODED_LAUNCHER_PATH}" >"$ORIG"
 cp "$ORIG" "$PATCHED"
@@ -123,4 +118,9 @@ grep -Fq "$VERSION_NAME" "$PATCHED" || fail "promotion version binding missing"
 grep -Fq "$ARTIFACT_GATE" "$PATCHED" || fail "promotion artifact gate binding missing"
 
 echo 'ENCODED_NETWORK_PROMOTION_PREFLIGHT=PASS exact-promotion-artifacts proven-v3-encoded-runner explicit-lan-path'
+if [[ "${HELIX_PRECHECK_ONLY:-0}" == "1" ]]; then
+    echo 'ENCODED_NETWORK_AUDIT_A=PASS exact-artifact-provenance-and-lan-path'
+    echo 'ENCODED_NETWORK_AUDIT_B=PASS proven-v3-runtime-byte-identical-after-identity-normalization'
+    exit 0
+fi
 exec bash "$PATCHED"

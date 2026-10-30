@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_AUDITED_COMMIT="c849e4a583a28c630a3b18b6f78c0356c1166a7f"
-BASE_AUDITED_PATH="tools/helix-run-encoded-nvenc-torture-fix-v2-strict-audited.sh"
+BASE_BINDING_COMMIT="ee49a058d55311c5d4a57c55896ad2e5a6a0df03"
+BASE_BINDING_PATH="tools/helix-run-encoded-nvenc-torture-fix-v2-strict.sh"
 
-git cat-file -e "${BASE_AUDITED_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$BASE_AUDITED_COMMIT"
-git cat-file -e "${BASE_AUDITED_COMMIT}^{commit}" 2>/dev/null || { echo "FAIL: pinned audited v2 launcher unavailable" >&2; exit 2; }
+git cat-file -e "${BASE_BINDING_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$BASE_BINDING_COMMIT"
+git cat-file -e "${BASE_BINDING_COMMIT}^{commit}" 2>/dev/null || { echo "FAIL: pinned fix-v2 binding commit unavailable" >&2; exit 2; }
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT INT TERM
-git show "${BASE_AUDITED_COMMIT}:${BASE_AUDITED_PATH}" >"$tmp"
+git show "${BASE_BINDING_COMMIT}:${BASE_BINDING_PATH}" >"$tmp"
 
 python3 - "$tmp" <<'PY'
 from pathlib import Path
@@ -24,7 +24,14 @@ def once(old,new,label):
         raise SystemExit(f"FAIL: {label} anchor count={n}")
     s=s.replace(old,new,1)
 
-# Rebind the v2 audited binding script to the exact v3 build.
+# Carry forward the two proven syntax corrections from the audited v2 launcher.
+once('''from pathlib import Path\nimport re\np=Path("$EMITTED")\n''',
+     '''from pathlib import Path\nimport re, sys\np=Path(sys.argv[1])\n''',
+     'emitted path correction')
+once("pattern=re.compile(r'''", 'pattern=re.compile(r"""', 'regex open delimiter')
+once("''', re.S)", '""", re.S)', 'regex close delimiter')
+
+# Bind to the exact v3 source/server/APK build.
 once('SOURCE_COMMIT="22fb078d1e294a04c20fe9ba512b63d39d4e9f45"',
      'SOURCE_COMMIT="951ce95cd2ea14bf34e099d2b7e56f272d05cdac"',
      'source commit')
@@ -44,13 +51,13 @@ once('VERSION_NAME="helix-encoded-fix-v2-22fb078d1e294a04c20fe9ba512b63d39d4e9f4
      'VERSION_NAME="helix-encoded-fix-v3-951ce95cd2ea14bf34e099d2b7e56f272d05cdac"',
      'version name')
 
-# Update metadata/provenance labels from v2 to v3.
-s=s.replace('fix-v2', 'fix-v3')
-once("artifact_gate=PASS encoded-nvenc-fix-v2-server-apk-exact-source",
-     "artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source",
-     'artifact gate')
+old_gate='artifact_gate=PASS encoded-nvenc-fix-v2-server-apk-exact-source'
+new_gate='artifact_gate=PASS encoded-nvenc-fix-v3-server-apk-exact-source'
+if s.count(old_gate) != 2:
+    raise SystemExit(f"FAIL: artifact gate anchor count={s.count(old_gate)}")
+s=s.replace(old_gate,new_gate)
 
-# Extend the nested emitted-runtime transformer with the evidence-backed rtx8 contract.
+# Replace only the strict reducer's disproven rtx8 same-frame rule.
 anchor="required=[\n"
 if s.count(anchor) != 1:
     raise SystemExit(f"FAIL: nested required-list anchor count={s.count(anchor)}")
@@ -82,7 +89,6 @@ new_reducer = """for c in ('rtx8','gap9','full_reference'):
         frame=inj[c].get('frame')
         if not any(x.get('stream')=='0' and x.get('frame')==frame and x.get('action')=='applied' for x in inv): errors.append(f'{c}:invalidation_not_applied')
 """
-
 inject = (
     "old_reducer=" + repr(old_reducer) + "\n"
     "new_reducer=" + repr(new_reducer) + "\n"
@@ -92,7 +98,6 @@ inject = (
 )
 s=s.replace(anchor, inject+anchor, 1)
 
-# Make the nested self-audit require the new v3 reducer contract.
 marker="    'HELIX_VULKAN_DONE frames=220',\n"
 replacement=(
     "    \"for c in ('rtx8','gap9','full_reference'):\",\n"
@@ -103,7 +108,6 @@ replacement=(
 )
 once(marker,replacement,'nested v3 reducer requirements')
 
-# Rename the runtime binding success gate.
 once('FIX_V2_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-unchanged',
      'FIX_V3_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-v3-audited',
      'binding success gate')
@@ -112,10 +116,13 @@ p.write_text(s)
 PY
 
 bash -n "$tmp"
+grep -Fq 'p=Path(sys.argv[1])' "$tmp" || { echo "FAIL: emitted path correction missing" >&2; exit 2; }
+grep -Fq 'pattern=re.compile(r"""' "$tmp" || { echo "FAIL: regex delimiter correction missing" >&2; exit 2; }
 grep -Fq '951ce95cd2ea14bf34e099d2b7e56f272d05cdac' "$tmp" || { echo "FAIL: v3 source binding missing" >&2; exit 2; }
 grep -Fq '1fcbb80dd25ea45c4228008da81d9dfcec9d930a9e8b673201866411d52b64af' "$tmp" || { echo "FAIL: v3 server hash binding missing" >&2; exit 2; }
 grep -Fq '1feec0aa967a142188319b4489aa31b70b9d24b01216b31c89bcdd931a13e83c' "$tmp" || { echo "FAIL: v3 APK hash binding missing" >&2; exit 2; }
-grep -Fq "for c in ('rtx8','gap9','full_reference')" "$tmp" || { echo "FAIL: v3 unified reducer transformer missing" >&2; exit 2; }
+grep -Fq "for c in ('rtx8','gap9','full_reference')" "$tmp" || { echo "FAIL: v3 reducer transformer missing" >&2; exit 2; }
 grep -Fq 'FIX_V3_RUNTIME_BINDING=PASS exact-source-server-apk-hashes reducer-v3-audited' "$tmp" || { echo "FAIL: v3 binding gate missing" >&2; exit 2; }
+! grep -Fq 'rtx8:not_same_frame_decoded' "$tmp" || { echo "FAIL: stale rtx8 same-frame reducer remains in generated binding" >&2; exit 2; }
 
 exec bash "$tmp"

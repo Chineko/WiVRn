@@ -77,7 +77,7 @@ def main() -> int:
     updated[path] = replace_once(
         updated[path],
         "\t// Cleanup\n\tnotify_uninit();",
-        "\t// Cleanup. Join the bounded synthetic worker before releasing its connection.\n\tif (helix_synthetic_thread)\n\t{\n\t\thelix_synthetic_thread->request_stop();\n\t\thelix_synthetic_thread.reset();\n\t}\n\tif (helix_synthetic_transport_enabled)\n\t\tconnection.reset();\n\n\tnotify_uninit();",
+        "\t// Cleanup. Join the bounded synthetic worker before releasing its connection.\n\tif (helix_synthetic_thread)\n\t{\n\t\thelix_synthetic_thread->request_stop();\n\t\thelix_synthetic_thread.reset();\n\t}\n\tif (helix_synthetic_transport_enabled)\n\t\t::connection.reset();\n\n\tnotify_uninit();",
         path,
     )
     updated[path] = replace_once(
@@ -111,6 +111,7 @@ def main() -> int:
                 "HELIX_SYNTHETIC_TRANSPORT_EXIT",
                 "helix_synthetic_thread->request_stop()",
                 "helix_synthetic_result.store",
+                "::connection.reset()",
             ),
             "server/helix_synthetic_transport.cpp": (
                 "HELIX_SYNTHETIC_TRANSPORT_ORACLE_SANITY",

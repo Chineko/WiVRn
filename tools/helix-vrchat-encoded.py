@@ -109,7 +109,8 @@ def build(bundle, build_dir):
              ROOT / 'tools/helix-vrchat-encoded-stimulus.cpp', '-lopenxr_loader', '-lvulkan', '-pthread',
              '-o', bundle / 'stimulus'], output=bundle / 'build-stimulus.log', timeout=60)
     env = os.environ.copy()
-    env.update(ANDROID_HOME='/home/chineko/Android', JAVA_HOME='/usr/lib/jvm/java-17-openjdk')
+    env.update(ANDROID_HOME='/opt/android-sdk', JAVA_HOME='/usr/lib/jvm/java-17-openjdk')
+    env.pop('ANDROID_SDK_ROOT', None)
     command(['/usr/lib/jvm/java-17-openjdk/bin/java', '-classpath', ROOT / 'gradle/wrapper/gradle-wrapper.jar',
              'org.gradle.wrapper.GradleWrapperMain', '--project-dir', ROOT, '--offline', '--no-daemon',
              '--max-workers=2', 'assembleDebug', '-Pwivrn_version=helix-encoded-' + commit],
@@ -228,6 +229,7 @@ def reduce(server, quest, stimulus, spec):
         if abs(v['bytes_mean'] / c['frame_bytes_mean'] - 1) > .04: calibration.append(f'eye{eye}:encoded_mean_not_calibrated')
         if not .75 * c['frame_bytes_max'] <= v['bytes_max'] <= 1.25 * c['frame_bytes_max']: calibration.append(f'eye{eye}:encoded_peak_not_calibrated')
         if abs(v['gap_us'] - 1e6 / c['fps']) > 30: calibration.append(f'eye{eye}:cadence_not_calibrated')
+        if not 40_000 <= v['gap_max_us'] <= 212_500: calibration.append(f'eye{eye}:producer_gap_not_representative')
     return {'runtime': 'PASS' if not errors else 'FAIL', 'errors': errors, 'canaries': evidence,
             'traffic_calibration': 'PASS' if not calibration else 'NOT_ESTABLISHED',
             'calibration_errors': calibration, 'observed_pacing': observed,
@@ -291,6 +293,8 @@ def run(bundle, out):
     serial = None
     server = None
     children = {}
+    launched = False
+    handles = []
     result = {'runtime': 'NOT_RUN', 'overall': 'BLOCKED', 'pixel_cleanliness': 'NOT_ESTABLISHED'}
     try:
         seal = verify_seal(bundle)
@@ -338,9 +342,11 @@ def run(bundle, out):
         env['XR_RUNTIME_JSON'] = seal['manifest']
         # Logcat is bounded by the run and starts before launch; no global log clear.
         capture = (out / 'quest.log').open('w')
+        handles.append(capture)
         logcat = subprocess.Popen(['adb', '-s', serial, 'logcat', '-T', '1', '-v', 'epoch', 'WiVRn:V', 'AndroidRuntime:E', 'libc:E', '*:S'], stdout=capture, stderr=subprocess.STDOUT, cwd=ROOT)
         processes.append(logcat)
         server_log = (out / 'server.log').open('w')
+        handles.append(server_log)
         server = subprocess.Popen([seal['server'], '-f', str(out / 'config.json'), '--no-publish-service', '--no-manage-active-runtime'],
                                   env=env, stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True, cwd=ROOT)
         processes.append(server)
@@ -350,6 +356,7 @@ def run(bundle, out):
         adb(serial, 'shell', 'am', 'force-stop', PACKAGE)
         adb(serial, 'shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', 'wivrn://' + HOST,
             '-n', PACKAGE + '/' + ACTIVITY, output=out / 'launch.txt')
+        launched = True
         wait_for(lambda: server.poll() is not None or 'Client connected' in (out / 'server.log').read_text(), 45, 'trusted LAN connection')
         require(server.poll() is None, 'server exited before connection')
         children = owned_children(server.pid, seal['server'])
@@ -357,6 +364,7 @@ def run(bundle, out):
         child_env = os.environ.copy()
         child_env['XR_RUNTIME_JSON'] = seal['manifest']
         workload_log = (out / 'stimulus.log').open('w')
+        handles.append(workload_log)
         workload = subprocess.Popen([seal['stimulus'], str(bundle / 'frames.plan')], env=child_env, stdout=workload_log, stderr=subprocess.STDOUT, start_new_session=True, cwd=ROOT)
         processes.append(workload)
         # Loaded module proof belongs to the actual OpenXR application, not server ELF.
@@ -396,8 +404,10 @@ def run(bundle, out):
         if children:
             time.sleep(.2)
             stop_children(children, signal.SIGKILL)
+        for f in handles:
+            f.close()
         # Do not force-stop before collecting graceful teardown evidence.
-        if serial and result['runtime'] != 'NOT_RUN':
+        if serial and launched:
             try: adb(serial, 'shell', 'am', 'force-stop', PACKAGE)
             except Exception: pass
         result['installed_by_run'] = installed_by_run

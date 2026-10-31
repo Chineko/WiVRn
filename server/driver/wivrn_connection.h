@@ -32,6 +32,7 @@
 #include <stdexcept>
 #include <stop_token>
 #include <system_error>
+#include <sys/time.h>
 
 namespace wivrn
 {
@@ -82,6 +83,9 @@ public:
 			if (const char * path = std::getenv("HELIX_ENCODED_PATH_PLAN"))
 			{
 				if (!has_stream()) throw std::runtime_error("representative path requires UDP");
+				timeval timeout{0, 100000};
+				if (setsockopt(stream.get_fd(), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0)
+					throw std::system_error(errno, std::generic_category(), "representative UDP send timeout");
 				encoded_path = std::make_unique<helix::encoded_path>(path);
 			}
 		});

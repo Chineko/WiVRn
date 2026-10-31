@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_COMMIT="392bb662ed20c6866af0942d219359518a885193"
-BUILD_TOOLING_COMMIT="2f1ed39b3c1b63a05a468cc70039a1b78e2544be"
+BUILD_TOOLING_COMMIT="4f0b216d78bd4fbd31fe804eac59ff5d88013b98"
 BASE_META_SHA256="88c1358ee2b27a3fbff9c0f7893cb625af1730a81db6aa05c552bf51b48d3fa1"
 MONADO_REV="8b259763fdd23c46592fd4cdd30b4eea997d4b70"
 OUT_ROOT="$HOME/helix-hevc10-decoder-recovery-v1-runtime"
@@ -16,7 +16,7 @@ TEMPLATE_REL="server/dist/openxr_manifest.in.json"
 SERVER_CMAKE_REL="server/CMakeLists.txt"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git sha256sum awk grep python3 file nm; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
+for c in git sha256sum awk grep python3 file nm tail; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
 for f in "$LIB" "$MANIFEST" "$META" "$WORKTREE/$TEMPLATE_REL" "$WORKTREE/$SERVER_CMAKE_REL"; do [[ -s "$f" ]] || fail "missing helper artifact/source: $f"; done
 [[ ! -e "$SEAL" ]] || fail "helper seal already exists: $SEAL"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || fail "worktree source mismatch"

@@ -1,0 +1,69 @@
+{
+  "tested_source_commit": "dfaefc2f444ac6c9779a710d66623e2b453f5b20",
+  "runtime_bundle": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated",
+  "evidence_directory": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-run-02",
+  "artifacts": {
+    "server": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/server/wivrn-server",
+      "sha256": "47a473bc5170e345dbb86ca223270f5e5512d9dfd3deb17c7127af55365d1bce"
+    },
+    "apk": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/client.apk",
+      "sha256": "6a9b5ff4e85cea61fe6c65e0f630dcb3db2fd008290ad45cdc4a343262717887"
+    },
+    "stimulus": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/stimulus",
+      "sha256": "96fc7d461d4d5dd2c952f31feaeb1c587e1a4db4d8d4b043deba9c56d36e8680"
+    },
+    "runtime_elf": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/runtime/libopenxr_wivrn.so",
+      "sha256": "fcd349c5b7d3a459c02d0b88c5cf0efa13302a6468558b47eaebf2ee3402c88a"
+    },
+    "manifest": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/openxr_wivrn-dev.json",
+      "sha256": "39ab745752f49b028b07d2e09899c9dd8db9827ad59957ef2981cb8b3963a228"
+    },
+    "path.plan": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/path.plan",
+      "sha256": "10b3dd8ddccbfd27bed0919e11c5c73f817d44524d43df0bc73b722f3ee2e518"
+    },
+    "frames.plan": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/frames.plan",
+      "sha256": "c6f9d80b1b7540df4bfda495a6a75f389e97964b3da1bc015dd899479594b41d"
+    },
+    "production.plan": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/production.plan",
+      "sha256": "7538c619729966be7dc8e08efa124ed1df3db45a717134a5d2e4734d1c60f970"
+    },
+    "model.json": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/model.json",
+      "sha256": "f3b74d42e19e656728b47f3e5cd3d7ff8ddf30eafce40016ce5e17108bb02601"
+    },
+    "plan-seal.json": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-calibrated/plan-seal.json",
+      "sha256": "ba65aeb15c05d1d350c60bd2fc42a0a3cd086fdbfd2c019fc6821281e07040af"
+    }
+  },
+  "retained_logs": {
+    "server.log": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-run-02/server.log",
+      "sha256": "ad59b86f8a6fde8a4c66905731a007b31a534eb1e21017efccd2e4d5fefd9263"
+    },
+    "quest.log": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-run-02/quest.log",
+      "sha256": "27e2bc8692257a98316a99a5264adfdc6408c2c5f23b70a3562054abcc7d0f12"
+    },
+    "stimulus.log": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-run-02/stimulus.log",
+      "sha256": "0de0a1e3f4bda7b46ff4bd75e32f5469df6a2f9e84ee20caa575bfd6d9f2312a"
+    },
+    "evidence-seal.json": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-run-02/evidence-seal.json",
+      "sha256": "43fee9f1e65b12ab90d81b28e82fefb31402438678d2e42866955f9fc14febd8"
+    },
+    "input-seal.json": {
+      "path": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-run-02/input-seal.json",
+      "sha256": "8b35e2dfa6c7f9aacd5bd5575bfe650300d105c76534cfee0626eeb568437d2f"
+    }
+  }
+}

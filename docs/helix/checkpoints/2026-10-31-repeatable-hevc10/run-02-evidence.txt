@@ -1,0 +1,76 @@
+=== server.log — selected measurement records; full log hash in tested-artifacts.json ===
+HELIX_PRODUCTION_ARM stalls=6 idrs=6 bitrate_bps=45921000
+ INFO [create] HELIX_HEVC10_ENCODER_GATE stream=0 encoder=nvenc codec=h265 bit_depth=10
+ INFO [video_encoder] HELIX_HEVC10_FAULT_PLAN stream=0 target_ordinal=600 shard=0
+ INFO [video_encoder_nvenc] HELIX_HEVC10_MAIN10_PROFILE stream=0 profile=main10 input_bit_depth=10 output_bit_depth=10
+ INFO [create] HELIX_HEVC10_ENCODER_GATE stream=1 encoder=nvenc codec=h265 bit_depth=10
+ INFO [video_encoder] HELIX_HEVC10_FAULT_PLAN stream=1 target_ordinal=900 shard=0
+ INFO [video_encoder_nvenc] HELIX_HEVC10_MAIN10_PROFILE stream=1 profile=main10 input_bit_depth=10 output_bit_depth=10
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=4 bytes=55085
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=4 bytes=55111
+ WARN [SendData] HELIX_HEVC10_DROP stream=0 ordinal=600 frame=607 shard=0 packet_sequence=13227 cached=1
+ INFO [retransmit_cached] HELIX_HEVC10_RTX_QUEUED stream=0 frame=607 packet_sequence=13227 exact_canary=1
+HELIX_HEVC10_RTX_SENT stream=0 frame=607 packet_sequence=13227 actual_send=1
+ WARN [SendData] HELIX_HEVC10_DROP stream=1 ordinal=900 frame=907 shard=0 packet_sequence=19829 cached=1
+ INFO [retransmit_cached] HELIX_HEVC10_RTX_QUEUED stream=1 frame=907 packet_sequence=19829 exact_canary=1
+HELIX_HEVC10_RTX_SENT stream=1 frame=907 packet_sequence=19829 actual_send=1
+HELIX_PRODUCER_STALL_BEGIN index=0 at_us=36904821 end_us=36955472
+HELIX_PRODUCER_STALL_END index=0 at_us=36960437 observed=1
+HELIX_PRODUCER_STALL_BEGIN index=1 at_us=123491156 end_us=123522614
+HELIX_PRODUCER_STALL_END index=1 at_us=123524495 observed=1
+HELIX_PRODUCER_STALL_BEGIN index=2 at_us=151757149 end_us=151823447
+HELIX_PRODUCER_STALL_END index=2 at_us=151823790 observed=1
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=14379 bytes=23730
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=14379 bytes=43336
+HELIX_PRODUCER_IDR count=1 at_us=159892828
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=14389 bytes=53161
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=14389 bytes=53520
+HELIX_PRODUCER_IDR count=1 at_us=183265545
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=16492 bytes=45294
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=16492 bytes=54656
+HELIX_PRODUCER_STALL_BEGIN index=3 at_us=194866836 end_us=194914968
+HELIX_PRODUCER_STALL_END index=3 at_us=194921001 observed=1
+HELIX_PRODUCER_IDR count=1 at_us=194921001
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=17541 bytes=11729
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=17541 bytes=37388
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=17720 bytes=48645
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=17721 bytes=54453
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=17730 bytes=54402
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=17730 bytes=44130
+HELIX_PRODUCER_IDR count=1 at_us=197110889
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=17737 bytes=43106
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=17737 bytes=44794
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=17746 bytes=36912
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=17747 bytes=48060
+HELIX_PRODUCER_STALL_BEGIN index=4 at_us=208908606 end_us=208951706
+HELIX_PRODUCER_STALL_END index=4 at_us=208953970 observed=1
+HELIX_PRODUCER_IDR count=1 at_us=208953970
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=18802 bytes=22892
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=18802 bytes=51335
+HELIX_PRODUCER_STALL_BEGIN index=5 at_us=247662896 end_us=247715395
+HELIX_PRODUCER_STALL_END index=5 at_us=247719189 observed=1
+HELIX_PRODUCER_IDR count=1 at_us=247719189
+ INFO [encode] HELIX_ENCODED_IDR stream=0 frame=22291 bytes=55622
+ INFO [encode] HELIX_ENCODED_IDR stream=1 frame=22291 bytes=38080
+HELIX_PATH_SUMMARY sent=1183759 dropped0=177 dropped1=205 delayed0=269669 delayed1=269306 failed=0 canceled=0 peak_packets=230 peak_bytes=314005 late_max_us=1579
+ INFO [~video_encoder] HELIX_HEVC10_FAULT_SUMMARY stream=1 target_ordinal=900 injected=1 exact_rtx_sent=1 pending_sequence=no
+ INFO [helix_log_pacing_summary] Helix pacing baseline stream 1: version=fixed-50us-v1 frames=26955 payload_bytes=802532154 shards=592036 frame_bytes(avg/max)=29773/83785 frame_shards(avg/max)=21/61 send_span(avg/max)=1078/7502us payload_rate_max=38923636kbps sender_queue(events/depth_max)=26955/1 sender_queue_delay(avg/max)=6/588us inter_frame_gap(avg/max)=11128/78555us hist_send_span(<0.25/0.5/1/2/4/>4ms)=1158/543/6278/18790/185/1 hist_queue_delay(<0.1/0.5/1/2/5/>5ms)=26939/14/2/0/0/0
+ INFO [~video_encoder] HELIX_HEVC10_FAULT_SUMMARY stream=0 target_ordinal=600 injected=1 exact_rtx_sent=1 pending_sequence=no
+ INFO [helix_log_pacing_summary] Helix pacing baseline stream 0: version=fixed-50us-v1 frames=26958 payload_bytes=802779341 shards=592119 frame_bytes(avg/max)=29778/62005 frame_shards(avg/max)=21/45 send_span(avg/max)=1077/2255us payload_rate_max=15188857kbps sender_queue(events/depth_max)=26958/1 sender_queue_delay(avg/max)=6/488us inter_frame_gap(avg/max)=11127/79675us hist_send_span(<0.25/0.5/1/2/4/>4ms)=1131/550/6174/18946/157/0 hist_queue_delay(<0.1/0.5/1/2/5/>5ms)=26944/14/0/0/0/0
+=== quest.log — selected measurement records; full log hash in tested-artifacts.json ===
+         1793474188.476 27158 27291 I WiVRn   : [2026-10-31 20:16:28.476] [WiVRn] [info] HELIX_HEVC10_PROBE_EPOCH stream=0 epoch=1
+         1793474188.497 27158 27291 I WiVRn   : [2026-10-31 20:16:28.497] [WiVRn] [info] HELIX_HEVC10_PROBE_EPOCH stream=1 epoch=1
+         1793474188.517 27158 27291 I WiVRn   : [2026-10-31 20:16:28.517] [WiVRn] [info] HELIX_HEVC10_PROBE_EPOCH stream=2 epoch=1
+         1793474196.215 27158 27291 I WiVRn   : [2026-10-31 20:16:36.215] [WiVRn] [info] HELIX_HEVC10_RTX_RECEIVED stream=0 frame=607 packet_sequence=13227 shard=0
+         1793474196.215 27158 27291 I WiVRn   : [2026-10-31 20:16:36.215] [WiVRn] [info] HELIX_HEVC10_RTX_ASSEMBLED stream=0 frame=607
+         1793474196.219 27158 27302 I WiVRn   : [2026-10-31 20:16:36.219] [WiVRn] [info] HELIX_HEVC10_RTX_MEDIA_OUTPUT stream=0 frame=607 exact_recovered_frame=1
+         1793474196.220 27158 27301 I WiVRn   : [2026-10-31 20:16:36.220] [WiVRn] [info] HELIX_HEVC10_IMAGE_AFTER_RTX stream=0 recovered_frame=607 image_frame=607 exact=true
+         1793474199.551 27158 27291 I WiVRn   : [2026-10-31 20:16:39.551] [WiVRn] [info] HELIX_HEVC10_RTX_RECEIVED stream=1 frame=907 packet_sequence=19829 shard=0
+         1793474199.551 27158 27291 I WiVRn   : [2026-10-31 20:16:39.551] [WiVRn] [info] HELIX_HEVC10_RTX_ASSEMBLED stream=1 frame=907
+         1793474199.556 27158 27310 I WiVRn   : [2026-10-31 20:16:39.556] [WiVRn] [info] HELIX_HEVC10_RTX_MEDIA_OUTPUT stream=1 frame=907 exact_recovered_frame=1
+         1793474199.556 27158 27309 I WiVRn   : [2026-10-31 20:16:39.556] [WiVRn] [info] HELIX_HEVC10_IMAGE_AFTER_RTX stream=1 recovered_frame=907 image_frame=907 exact=true
+         1793474490.008 27158 27252 I WiVRn   : [2026-10-31 20:21:30.008] [WiVRn] [info] HELIX_HEVC10_PROBE_SUMMARY stream=1 rtx_assembled=1 media_exact=1 image_after=1 overflow=0 pending_media=0 pending_image=0
+         1793474490.020 27158 27252 I WiVRn   : [2026-10-31 20:21:30.020] [WiVRn] [info] HELIX_HEVC10_PROBE_SUMMARY stream=0 rtx_assembled=1 media_exact=1 image_after=1 overflow=0 pending_media=0 pending_image=0
+=== stimulus.log — selected measurement records; full log hash in tested-artifacts.json ===
+HELIX_VULKAN_SCHEDULE elapsed_us=300005786 expected_us=299997101
+HELIX_VULKAN_DONE frames=26933 attempts=26934

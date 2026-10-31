@@ -1,0 +1,60 @@
+{
+  "runtime": "PASS",
+  "errors": [],
+  "canaries": {
+    "0": {
+      "frame": "607",
+      "packet_sequence": "13227",
+      "images": [
+        {
+          "stream": "0",
+          "recovered_frame": "607",
+          "image_frame": "607",
+          "exact": "true"
+        }
+      ]
+    },
+    "1": {
+      "frame": "907",
+      "packet_sequence": "19829",
+      "images": [
+        {
+          "stream": "1",
+          "recovered_frame": "907",
+          "image_frame": "907",
+          "exact": "true"
+        }
+      ]
+    }
+  },
+  "traffic_calibration": "NOT_ESTABLISHED",
+  "calibration_errors": [
+    "eye1:encoded_peak_not_calibrated"
+  ],
+  "observed_pacing": {
+    "1": {
+      "frames": 26955,
+      "bytes_mean": 29773,
+      "bytes_max": 83785,
+      "gap_us": 11128,
+      "gap_max_us": 78555
+    },
+    "0": {
+      "frames": 26958,
+      "bytes_mean": 29778,
+      "bytes_max": 62005,
+      "gap_us": 11127,
+      "gap_max_us": 79675
+    }
+  },
+  "hevc10_recovery": "PASS",
+  "pixel_cleanliness": "NOT_ESTABLISHED",
+  "overall": "NOT_ESTABLISHED",
+  "installed_by_run": true,
+  "rule40": {
+    "direct_evidence": "See retained logs and per-frame reducer evidence",
+    "supported_inference": "No recovery inference is permitted without the exact chain",
+    "remaining_ambiguity": "Pixel contents and VRChat rendering cost are not measured",
+    "decision": "Any failure closes the audit gate; do not retry before full re-audit"
+  }
+}

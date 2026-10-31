@@ -1,0 +1,200 @@
+{
+  "s0": {
+    "frames": 26933,
+    "bytes_mean": 30166.40890357554,
+    "bytes_max": 60570,
+    "shards_mean": 22.54791519697026,
+    "shards_max": 44,
+    "gap_mean_ms": 11.139057663745731,
+    "gap_max_ms": 81.644,
+    "idr_frames": 6
+  },
+  "s1": {
+    "frames": 26933,
+    "bytes_mean": 29614.506961719824,
+    "bytes_max": 60570,
+    "shards_mean": 22.148850852114506,
+    "shards_max": 44,
+    "gap_mean_ms": 11.139142024357643,
+    "gap_max_ms": 82.02,
+    "idr_frames": 6
+  },
+  "packets": 1203818,
+  "dropped_packets": 394,
+  "pps_total": 4012.7266666666665,
+  "frames_expected_incomplete": 19,
+  "rtx_canary_frames": {
+    "0": 91,
+    "1": 90
+  },
+  "max_path_delay_ms": 56.263,
+  "delayed_gt15ms": 822,
+  "delayed_gt30ms": 459,
+  "net_events": 8,
+  "producer_stalls": [
+    [
+      36896398,
+      36955472
+    ],
+    [
+      123482614,
+      123522614
+    ],
+    [
+      151745410,
+      151823447
+    ],
+    [
+      194855601,
+      194914968
+    ],
+    [
+      208903176,
+      208951706
+    ],
+    [
+      247661155,
+      247715395
+    ]
+  ],
+  "send_monotonic": true,
+  "seed": 20261031,
+  "duration_s": 300,
+  "profile": "torture",
+  "calibration": {
+    "fps": 89.86744551786116,
+    "frame_bytes_mean": 29731.0,
+    "frame_bytes_max": 60719,
+    "shard_payload": 1385,
+    "shards_mean": 21.90000887907962,
+    "shards_max": 44,
+    "pacer_spacing_us": 50,
+    "stream1_offset_ms": [
+      2.0,
+      4.5
+    ],
+    "slow_send_p": 0.0015,
+    "slow_send_ms": [
+      2.0,
+      4.0
+    ],
+    "producer_stall_per_min": 0.25,
+    "producer_stall_ms": [
+      40.0,
+      170.0
+    ],
+    "producer_stall_median_ms": 55.0,
+    "size_sigma": 0.18,
+    "size_rho": 0.98,
+    "idr_multiplier": [
+      1.8,
+      2.4
+    ],
+    "idr_after_stall_p": 0.5,
+    "idr_after_net_event_p": 0.8,
+    "idr_delay_ms": [
+      50.0,
+      180.0
+    ],
+    "event_mix": [
+      0.6,
+      0.25,
+      0.15
+    ],
+    "followup_mix": [
+      0.35,
+      0.0,
+      0.65
+    ],
+    "erasure_L_ms": [
+      10.0,
+      19.0
+    ],
+    "hold_after_loss_ms": [
+      15.0,
+      60.0
+    ],
+    "hold_after_loss_median_ms": 30.0,
+    "hold_only_ms": [
+      30.0,
+      90.0
+    ],
+    "short_L_ms": [
+      0.1,
+      3.0
+    ],
+    "cluster_p": 0.5,
+    "cluster_followups": [
+      1,
+      3
+    ],
+    "cluster_gap_ms": [
+      5.0,
+      80.0
+    ],
+    "drain_gap_us": 14,
+    "warmup_s": 15.0
+  },
+  "path_events": [
+    {
+      "kind": "hold",
+      "s": 131118410,
+      "L": 0,
+      "e": 131174152
+    },
+    {
+      "kind": "erasure_hold",
+      "s": 159713635,
+      "L": 17134,
+      "e": 159767562
+    },
+    {
+      "kind": "erasure_hold",
+      "s": 183111329,
+      "L": 18120,
+      "e": 183148092
+    },
+    {
+      "kind": "erasure_hold",
+      "s": 196872121,
+      "L": 11697,
+      "e": 196917160
+    },
+    {
+      "kind": "erasure_hold",
+      "s": 196960595,
+      "L": 15977,
+      "e": 197026751
+    },
+    {
+      "kind": "short_erasure",
+      "s": 197085152,
+      "L": 2571,
+      "e": 197087724
+    },
+    {
+      "kind": "erasure_hold",
+      "s": 197131372,
+      "L": 18502,
+      "e": 197209874
+    },
+    {
+      "kind": "erasure_hold",
+      "s": 289989163,
+      "L": 11080,
+      "e": 290015243
+    }
+  ],
+  "source_log": "/home/chineko/helix-blackout-20261029-191648-reduced/server-log.txt",
+  "source_log_sha256": "f2cc618380004e4a2b0a5724f22dd760a4ea11e36bf0b65b17fc5a1752b95169",
+  "warmup_override_s": 15,
+  "frame_count": 26933,
+  "encoder_bitrate_bps": 45921000,
+  "idr_count": 6,
+  "limitations": [
+    "content complexity is a deterministic surrogate",
+    "actual encoded sizes/cadence must pass a separate runtime calibration gate",
+    "shared path event shapes/drain priors retain the existing model assumptions",
+    "not a reproduction of VRChat CPU, avatar, or GPU rendering cost"
+  ]
+}

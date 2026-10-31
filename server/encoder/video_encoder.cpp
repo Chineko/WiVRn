@@ -30,6 +30,8 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -300,6 +302,15 @@ std::unique_ptr<video_encoder> video_encoder::create(
 {
 	using namespace std::string_literals;
 	std::unique_ptr<video_encoder> res;
+
+	const char * helix_hevc10 = std::getenv("HELIX_HEVC10_RECOVERY");
+	const bool helix_hevc10_enabled = helix_hevc10 && std::strcmp(helix_hevc10, "1") == 0;
+	if (helix_hevc10_enabled && stream_idx < 2)
+	{
+		if (settings.encoder_name != encoder_nvenc || settings.codec != video_codec::h265 || settings.bit_depth != 10)
+			throw std::runtime_error("HELIX_HEVC10_RECOVERY requires NVENC H.265 Main10 on both eye streams");
+		U_LOG_I("HELIX_HEVC10_ENCODER_GATE stream=%u encoder=nvenc codec=h265 bit_depth=10", stream_idx);
+	}
 	if (settings.encoder_name == encoder_vulkan)
 	{
 #if WIVRN_USE_VULKAN_ENCODE
@@ -403,6 +414,16 @@ video_encoder::video_encoder(vk_bundle & vk,
 			helix_rtx_encoder_registry[stream_idx] = this;
 	}
 	U_LOG_I("Helix pacing telemetry %s stream=%u shard_spacing=%lluus", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));
+
+	const char * helix_hevc10 = std::getenv("HELIX_HEVC10_RECOVERY");
+	helix_hevc10_fault_enabled = helix_hevc10 && std::strcmp(helix_hevc10, "1") == 0 && stream_idx < 2;
+	if (helix_hevc10_fault_enabled)
+	{
+		helix_hevc10_fault_target_ordinal = stream_idx == 0 ? 600 : 900;
+		U_LOG_I("HELIX_HEVC10_FAULT_PLAN stream=%u target_ordinal=%llu shard=0",
+		        stream_idx,
+		        static_cast<unsigned long long>(helix_hevc10_fault_target_ordinal));
+	}
 }
 
 video_encoder::~video_encoder()
@@ -457,6 +478,16 @@ video_encoder::~video_encoder()
 	        static_cast<unsigned long long>(helix_gap_frame_span_hist[4]),
 	        static_cast<unsigned long long>(gap_report_delay_avg_us),
 	        static_cast<unsigned long long>(helix_gap_report_delay_max_us));
+
+	if (helix_hevc10_fault_enabled)
+	{
+		U_LOG_I("HELIX_HEVC10_FAULT_SUMMARY stream=%u target_ordinal=%llu injected=%llu exact_rtx_sent=%llu pending_sequence=%s",
+		        stream_idx,
+		        static_cast<unsigned long long>(helix_hevc10_fault_target_ordinal),
+		        static_cast<unsigned long long>(helix_hevc10_faults_injected),
+		        static_cast<unsigned long long>(helix_hevc10_exact_rtx_sent),
+		        helix_hevc10_fault_packet_sequence ? "yes" : "no");
+	}
 
 	U_LOG_I(
 	        "Helix time-diverse summary stream=%u enabled=%d fresh_bytes=%llu replay_bytes=%llu reference_frames=%llu scheduled=%llu replayed=%llu replayed_shards=%llu skipped_oversize=%llu skipped_budget=%llu expired=%llu send_errors=%llu credit=%llu",
@@ -667,6 +698,16 @@ bool video_encoder::retransmit_cached(uint64_t packet_sequence)
 		helix_rtx_bytes += payload_bytes;
 		helix_rtx_send_time_total_us += send_us;
 		helix_rtx_send_time_max_us = std::max(helix_rtx_send_time_max_us, send_us);
+		if (helix_hevc10_fault_enabled && helix_hevc10_fault_packet_sequence &&
+		    packet_sequence == *helix_hevc10_fault_packet_sequence)
+		{
+			++helix_hevc10_exact_rtx_sent;
+			U_LOG_I("HELIX_HEVC10_RTX_SENT stream=%u frame=%llu packet_sequence=%llu exact_canary=1",
+			        stream_idx,
+			        static_cast<unsigned long long>(helix_hevc10_fault_frame_index.value_or(0)),
+			        static_cast<unsigned long long>(packet_sequence));
+			helix_hevc10_fault_packet_sequence.reset();
+		}
 		return true;
 	}
 	catch (...)
@@ -870,6 +911,13 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 	std::lock_guard lock(mutex);
 	if (shard.shard_idx == 0)
 	{
+		if (helix_hevc10_fault_enabled && !control)
+		{
+			++helix_hevc10_frame_ordinal;
+			helix_hevc10_fault_current_frame = helix_hevc10_frame_ordinal == helix_hevc10_fault_target_ordinal;
+			helix_hevc10_fault_dropped = false;
+		}
+
 		if (control)
 		{
 			if (helix_td_pending_frame)
@@ -949,17 +997,37 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 
 		helix_current_frame_bytes += std::distance(begin, next);
 		helix_current_frame_shards++;
-		try
+
+		const bool helix_hevc10_drop =
+		        helix_hevc10_fault_enabled && helix_hevc10_fault_current_frame &&
+		        !helix_hevc10_fault_dropped && !control &&
+		        shard.packet_sequence != 0 && shard.shard_idx == 0;
+		if (helix_hevc10_drop)
 		{
-			if (control)
-				cnx->send_control(to_headset::video_stream_data_shard{shard});
-			else
-				cnx->send_stream(to_headset::video_stream_data_shard{shard});
+			helix_hevc10_fault_dropped = true;
+			++helix_hevc10_faults_injected;
+			helix_hevc10_fault_packet_sequence = shard.packet_sequence;
+			helix_hevc10_fault_frame_index = shard.frame_idx;
+			U_LOG_W("HELIX_HEVC10_DROP stream=%u ordinal=%llu frame=%llu shard=0 packet_sequence=%llu cached=1",
+			        stream_idx,
+			        static_cast<unsigned long long>(helix_hevc10_frame_ordinal),
+			        static_cast<unsigned long long>(shard.frame_idx),
+			        static_cast<unsigned long long>(shard.packet_sequence));
 		}
-		catch (...)
+		else
 		{
-			++helix_initial_send_errors;
-			// Ignore network errors
+			try
+			{
+				if (control)
+					cnx->send_control(to_headset::video_stream_data_shard{shard});
+				else
+					cnx->send_stream(to_headset::video_stream_data_shard{shard});
+			}
+			catch (...)
+			{
+				++helix_initial_send_errors;
+				// Ignore network errors
+			}
 		}
 		++shard.shard_idx;
 		shard.view_info.reset();

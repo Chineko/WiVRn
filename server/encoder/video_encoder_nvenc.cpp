@@ -34,7 +34,9 @@ bool operator==(const GUID & l, const GUID & r)
 }
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
+#include <string_view>
 
 #define NVENC_CHECK_NOENCODER(x)                                          \
 	do                                                                \
@@ -382,6 +384,11 @@ video_encoder_nvenc::video_encoder_nvenc(
 			{
 				config.profileGUID = NV_ENC_HEVC_PROFILE_MAIN10_GUID;
 				check_profile_guid_supported(shared_state, session_handle, encodeGUID, config.profileGUID, "GPU doesn't support 10-bit depth with H.265 codec.");
+				if (const char * helix_hevc10 = std::getenv("HELIX_HEVC10_RECOVERY");
+				    helix_hevc10 && std::string_view(helix_hevc10) == "1" && stream_idx < 2)
+				{
+					U_LOG_I("HELIX_HEVC10_MAIN10_PROFILE stream=%u profile=main10 input_bit_depth=10 output_bit_depth=10", stream_idx);
+				}
 			}
 
 			config.encodeCodecConfig.hevcConfig.inputBitDepth = bitDepth;

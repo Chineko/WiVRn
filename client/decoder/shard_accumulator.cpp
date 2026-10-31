@@ -220,6 +220,15 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 		return;
 	}
 
+	// Record retransmission completion before handing the frame to MediaCodec,
+	// so an asynchronous output callback cannot race ahead of the probe.
+	if (current.received_retransmission)
+	{
+		helix_diag::hevc10_note_rtx_assembled(current.feedback.stream_index, current.feedback.frame_index);
+		spdlog::info("HELIX_HEVC10_RTX_ASSEMBLED stream={} frame={}",
+		             current.feedback.stream_index, current.feedback.frame_index);
+	}
+
 	// Try to extract a frame
 	decoder_->frame_completed(current.feedback, *data_shards.front()->view_info);
 

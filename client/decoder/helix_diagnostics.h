@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <optional>
 
 namespace wivrn::helix_diag
 {
@@ -148,6 +149,141 @@ inline network_snapshot snapshot(uint8_t stream_index)
 	        .since_old_shard_us = age_us(now, state.last_old_shard),
 	        .since_frame_jump_us = age_us(now, state.last_frame_jump),
 	        .assembly_hist = state.assembly_hist,
+	};
+}
+
+constexpr size_t hevc10_probe_slots = 8;
+
+struct hevc10_probe_snapshot
+{
+	uint64_t rtx_assembled = 0;
+	uint64_t rtx_media_output = 0;
+	uint64_t image_after_rtx = 0;
+	uint64_t overflow = 0;
+	size_t pending_media = 0;
+	size_t pending_image = 0;
+};
+
+struct hevc10_probe_state
+{
+	std::mutex mutex;
+	std::array<std::optional<uint64_t>, hevc10_probe_slots> pending_media{};
+	std::array<std::optional<uint64_t>, hevc10_probe_slots> pending_image{};
+	uint64_t rtx_assembled = 0;
+	uint64_t rtx_media_output = 0;
+	uint64_t image_after_rtx = 0;
+	uint64_t overflow = 0;
+};
+
+inline std::array<hevc10_probe_state, stream_count> & hevc10_probe_states()
+{
+	static std::array<hevc10_probe_state, stream_count> states;
+	return states;
+}
+
+inline hevc10_probe_state & hevc10_probe(uint8_t stream_index)
+{
+	return hevc10_probe_states()[std::min<size_t>(stream_index, stream_count - 1)];
+}
+
+template <size_t N>
+inline bool hevc10_insert_unique(std::array<std::optional<uint64_t>, N> & slots, uint64_t frame_index)
+{
+	for (const auto & slot: slots)
+		if (slot && *slot == frame_index)
+			return true;
+	for (auto & slot: slots)
+	{
+		if (!slot)
+		{
+			slot = frame_index;
+			return true;
+		}
+	}
+	return false;
+}
+
+template <size_t N>
+inline bool hevc10_erase_exact(std::array<std::optional<uint64_t>, N> & slots, uint64_t frame_index)
+{
+	for (auto & slot: slots)
+	{
+		if (slot && *slot == frame_index)
+		{
+			slot.reset();
+			return true;
+		}
+	}
+	return false;
+}
+
+template <size_t N>
+inline std::optional<uint64_t> hevc10_erase_oldest_leq(
+        std::array<std::optional<uint64_t>, N> & slots, uint64_t frame_index)
+{
+	std::optional<size_t> best;
+	for (size_t i = 0; i < N; ++i)
+	{
+		if (!slots[i] || *slots[i] > frame_index)
+			continue;
+		if (!best || *slots[i] < *slots[*best])
+			best = i;
+	}
+	if (!best)
+		return {};
+	auto recovered = slots[*best];
+	slots[*best].reset();
+	return recovered;
+}
+
+inline void hevc10_note_rtx_assembled(uint8_t stream_index, uint64_t frame_index)
+{
+	auto & state = hevc10_probe(stream_index);
+	std::scoped_lock lock(state.mutex);
+	state.rtx_assembled++;
+	if (!hevc10_insert_unique(state.pending_media, frame_index))
+		state.overflow++;
+}
+
+inline bool hevc10_note_media_output(uint8_t stream_index, uint64_t frame_index)
+{
+	auto & state = hevc10_probe(stream_index);
+	std::scoped_lock lock(state.mutex);
+	if (!hevc10_erase_exact(state.pending_media, frame_index))
+		return false;
+	state.rtx_media_output++;
+	if (!hevc10_insert_unique(state.pending_image, frame_index))
+		state.overflow++;
+	return true;
+}
+
+inline std::optional<uint64_t> hevc10_note_image(uint8_t stream_index, uint64_t frame_index)
+{
+	auto & state = hevc10_probe(stream_index);
+	std::scoped_lock lock(state.mutex);
+	auto recovered = hevc10_erase_oldest_leq(state.pending_image, frame_index);
+	if (recovered)
+		state.image_after_rtx++;
+	return recovered;
+}
+
+inline hevc10_probe_snapshot hevc10_probe_snapshot_for(uint8_t stream_index)
+{
+	auto & state = hevc10_probe(stream_index);
+	std::scoped_lock lock(state.mutex);
+	size_t pending_media = 0;
+	size_t pending_image = 0;
+	for (const auto & slot: state.pending_media)
+		pending_media += bool(slot);
+	for (const auto & slot: state.pending_image)
+		pending_image += bool(slot);
+	return {
+	        .rtx_assembled = state.rtx_assembled,
+	        .rtx_media_output = state.rtx_media_output,
+	        .image_after_rtx = state.image_after_rtx,
+	        .overflow = state.overflow,
+	        .pending_media = pending_media,
+	        .pending_image = pending_image,
 	};
 }
 

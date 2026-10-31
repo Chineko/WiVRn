@@ -147,6 +147,18 @@ private:
 	uint64_t helix_rtx_send_errors = 0;
 	uint64_t helix_initial_send_errors = 0;
 
+	// Deterministic HEVC10 recovery canary. One fresh shard-0 is withheld once
+	// per eye after warmup, but retained in the ordinary RTX cache.
+	bool helix_hevc10_fault_enabled = false;
+	uint64_t helix_hevc10_frame_ordinal = 0;
+	uint64_t helix_hevc10_fault_target_ordinal = 0;
+	bool helix_hevc10_fault_current_frame = false;
+	bool helix_hevc10_fault_dropped = false;
+	uint64_t helix_hevc10_faults_injected = 0;
+	std::optional<uint64_t> helix_hevc10_fault_packet_sequence;
+	std::optional<uint64_t> helix_hevc10_fault_frame_index;
+	uint64_t helix_hevc10_exact_rtx_sent = 0;
+
 	uint64_t helix_gap_reports = 0;
 	uint64_t helix_gap_positions = 0;
 	uint64_t helix_gap_fully_mapped = 0;

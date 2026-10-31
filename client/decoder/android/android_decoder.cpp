@@ -219,6 +219,7 @@ void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index
 	}
 
 	auto network = wivrn::helix_diag::snapshot(stream_index);
+	auto hevc10_probe = wivrn::helix_diag::hevc10_probe_snapshot_for(stream_index);
 	std::scoped_lock lock(state->mutex);
 	uint64_t latency_average_us = state->latency_samples ? state->latency_total_us / state->latency_samples : 0;
 	uint64_t submit_to_media_average_us = state->submit_to_media_samples ? state->submit_to_media_total_us / state->submit_to_media_samples : 0;
@@ -246,6 +247,16 @@ void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index
 	        state->input_buffer_overflows,
 	        state->output_release_failures,
 	        state->image_output_failures);
+	spdlog::info(
+	        "HELIX_HEVC10_PROBE_SUMMARY stream={} rtx_assembled={} media_exact={} image_after={} overflow={} pending_media={} pending_image={}",
+	        stream_index,
+	        hevc10_probe.rtx_assembled,
+	        hevc10_probe.rtx_media_output,
+	        hevc10_probe.image_after_rtx,
+	        hevc10_probe.overflow,
+	        hevc10_probe.pending_media,
+	        hevc10_probe.pending_image);
+
 	spdlog::info(
 	        "Helix diagnostic summary stream {}: media_outputs={} submit_to_media(avg/max)={}/{}us output_gap_max={}us complete_interval(avg/last/max)={}/{}/{}us release_to_image(avg/max)={}/{}us image_processing(avg/max)={}/{}us hist_submit_image(<5/10/20/40/80/>80ms)={}/{}/{}/{}/{}/{} hist_submit_media={}/{}/{}/{}/{}/{} hist_output_gap={}/{}/{}/{}/{}/{} hist_complete_interval={}/{}/{}/{}/{}/{} hist_release_image={}/{}/{}/{}/{}/{} hist_image_processing={}/{}/{}/{}/{}/{} network(complete/incomplete/zero/missing/old/jumps/skipped)={}/{}/{}/{}/{}/{}/{} assembly(last/max)={}/{}us hist_assembly={}/{}/{}/{}/{}/{}",
 	        stream_index,
@@ -910,6 +921,11 @@ void decoder::on_image_available(AImageReader * reader)
 
 		assert(info->feedback.frame_index == frame_index);
 		helix_note_decoded(this, stream_index, frame_index);
+		if (auto recovered = wivrn::helix_diag::hevc10_note_image(stream_index, frame_index))
+		{
+			spdlog::info("HELIX_HEVC10_IMAGE_AFTER_RTX stream={} recovered_frame={} image_frame={} exact={}",
+			             stream_index, *recovered, frame_index, frame_index == *recovered);
+		}
 
 		auto vk_data = map_hardware_buffer(image.get());
 
@@ -1140,6 +1156,8 @@ void decoder::on_media_output_available(AMediaCodec * media_codec, void * userda
 	auto generation = helix_codec_generation(self);
 	uint64_t frame_index = bufferInfo && bufferInfo->presentationTimeUs >= 0 ? static_cast<uint64_t>(bufferInfo->presentationTimeUs) / 10'000 : 0;
 	helix_note_media_output(self, frame_index);
+	if (wivrn::helix_diag::hevc10_note_media_output(self->stream_index, frame_index))
+		spdlog::info("HELIX_HEVC10_RTX_MEDIA_OUTPUT stream={} frame={} exact_recovered_frame=1", self->stream_index, frame_index);
 	self->jobs.push([=]() {
 		if (!helix_codec_generation_matches(self, generation))
 			return false;

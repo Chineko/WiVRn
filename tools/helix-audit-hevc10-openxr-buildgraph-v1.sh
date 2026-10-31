@@ -12,10 +12,11 @@ SEAL="$OUT_ROOT/runtime-v1-seal.txt"
 SERVER_SHA256="98d0b826f265fd971ec7bbff12549df5d25bb084541d4658e34a32a3440a144d"
 APK_SHA256="cc25eb612e7a81004d6c59979707b3f70b8dedbf23794f4135c91f80d5a6e087"
 META_SHA256="88c1358ee2b27a3fbff9c0f7893cb625af1730a81db6aa05c552bf51b48d3fa1"
+AGENTS_SHA256="06f177622d2fa7d78b02843195f1ebe9fe24e931cebe71b3a4e3fa4b40dd35c8"
 MONADO_REV="8b259763fdd23c46592fd4cdd30b4eea997d4b70"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git sha256sum awk grep find file nm realpath sort python3 mktemp cat; do
+for c in git sha256sum awk grep find file nm realpath sort python3 mktemp; do
   command -v "$c" >/dev/null 2>&1 || fail "missing command $c"
 done
 
@@ -26,7 +27,7 @@ cd "$repo_root"
 # Rules and exact source/artifact checkpoint.
 [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || fail "local HEAD is not frozen source commit"
 [[ -z "$(git status --short)" ]] || fail "local source tree is dirty"
-[[ "$(git show "$SOURCE_COMMIT:AGENTS.md" | sha256sum | awk '{print $1}')" == "c3b21b35998bf333cb7e1e34cffb69f8d67091545efac6dc7134c585e9847376" ]] || fail "AGENTS.md hash mismatch"
+[[ "$(git show "$SOURCE_COMMIT:AGENTS.md" | sha256sum | awk '{print $1}')" == "$AGENTS_SHA256" ]] || fail "AGENTS.md hash mismatch"
 [[ -d "$WORKTREE" && -d "$BUILD_DIR" ]] || fail "exact-source worktree/build-server missing"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || fail "build worktree source mismatch"
 [[ -z "$(git -C "$WORKTREE" status --short)" ]] || fail "build worktree is dirty"

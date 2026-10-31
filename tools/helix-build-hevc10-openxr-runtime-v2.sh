@@ -17,7 +17,7 @@ HELPER_ROOT="$OUT_ROOT/openxr-runtime-v2"
 META="$HELPER_ROOT/metadata.txt"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git cmake ninja find realpath file nm sha256sum awk grep python3 mkdir sort; do
+for c in git cmake ninja find realpath file nm sha256sum awk grep python3 mkdir sort cat; do
   command -v "$c" >/dev/null 2>&1 || fail "missing command $c"
 done
 

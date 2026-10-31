@@ -225,7 +225,10 @@ def generate(seed, duration_s, profile, cal=CAL):
             rem = nbytes
             for sh in range(nshards):
                 cap_shard = edge_payload if sh == 0 or sh == nshards - 1 else cal["shard_payload"]
-                pb = min(cap_shard, rem)
+                remaining_shards = nshards - sh - 1
+                pb = min(cap_shard, rem - remaining_shards)
+                if pb < 1:
+                    raise RuntimeError("packetizer produced an empty shard")
                 rem -= pb
                 packets.append((int(t0 + sh * spacing), s, f, sh, nshards, pb))
             assert rem == 0

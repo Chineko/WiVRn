@@ -46,7 +46,7 @@ def transform_video_encoder_cpp(text: str) -> str:
     text = replace_once(text, old, new, "video_encoder.cpp encoder gate")
 
     old = """\tU_LOG_I(\"Helix pacing telemetry %s stream=%u shard_spacing=%lluus\", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));\n}\n"""
-    new = """\tU_LOG_I(\"Helix pacing telemetry %s stream=%u shard_spacing=%lluus\", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));\n\n\tconst char * helix_hevc10 = std::getenv(\"HELIX_HEVC10_RECOVERY\");\n\thelix_hevc10_fault_enabled = helix_hevc10 && std::strcmp(helix_hevc10, \"1\") == 0 && stream_idx < 2;\n\tif (helix_hevc10_fault_enabled)\n\t{\n\t\t// Stagger the eyes so each recovery is independently observable after warmup.\n\t\thelix_hevc10_fault_target_ordinal = stream_idx == 0 ? 600 : 900;\n\t\tU_LOG_I(\"HELIX_HEVC10_FAULT_PLAN stream=%u target_ordinal=%llu shard=1\",\n\t\t        stream_idx,\n\t\t        static_cast<unsigned long long>(helix_hevc10_fault_target_ordinal));\n\t}\n}\n"""
+    new = """\tU_LOG_I(\"Helix pacing telemetry %s stream=%u shard_spacing=%lluus\", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));\n\n\tconst char * helix_hevc10 = std::getenv(\"HELIX_HEVC10_RECOVERY\");\n\thelix_hevc10_fault_enabled = helix_hevc10 && std::strcmp(helix_hevc10, \"1\") == 0 && stream_idx < 2;\n\tif (helix_hevc10_fault_enabled)\n\t{\n\t\t// Stagger the eyes so each recovery is independently observable after warmup.\n\t\thelix_hevc10_fault_target_ordinal = stream_idx == 0 ? 600 : 900;\n\t\tU_LOG_I(\"HELIX_HEVC10_FAULT_PLAN stream=%u target_ordinal=%llu shard=0\",\n\t\t        stream_idx,\n\t\t        static_cast<unsigned long long>(helix_hevc10_fault_target_ordinal));\n\t}\n}\n"""
     text = replace_once(text, old, new, "video_encoder.cpp fault plan")
 
     old = """\tU_LOG_I(\n\t        \"Helix time-diverse summary stream=%u enabled=%d fresh_bytes=%llu replay_bytes=%llu reference_frames=%llu scheduled=%llu replayed=%llu replayed_shards=%llu skipped_oversize=%llu skipped_budget=%llu expired=%llu send_errors=%llu credit=%llu\",\n"""
@@ -58,12 +58,18 @@ def transform_video_encoder_cpp(text: str) -> str:
     text = replace_once(text, old, new, "video_encoder.cpp frame ordinal")
 
     old = """\t\thelix_current_frame_bytes += std::distance(begin, next);\n\t\thelix_current_frame_shards++;\n\t\ttry\n\t\t{\n\t\t\tif (control)\n\t\t\t\tcnx->send_control(to_headset::video_stream_data_shard{shard});\n\t\t\telse\n\t\t\t\tcnx->send_stream(to_headset::video_stream_data_shard{shard});\n\t\t}\n\t\tcatch (...)\n\t\t{\n\t\t\t++helix_initial_send_errors;\n\t\t\t// Ignore network errors\n\t\t}\n"""
-    new = """\t\thelix_current_frame_bytes += std::distance(begin, next);\n\t\thelix_current_frame_shards++;\n\n\t\tconst bool helix_hevc10_drop =\n\t\t        helix_hevc10_fault_enabled &&\n\t\t        helix_hevc10_fault_current_frame &&\n\t\t        !helix_hevc10_fault_dropped &&\n\t\t        !control && shard.packet_sequence != 0 && shard.shard_idx == 1;\n\t\tif (helix_hevc10_drop)\n\t\t{\n\t\t\thelix_hevc10_fault_dropped = true;\n\t\t\t++helix_hevc10_faults_injected;\n\t\t\tU_LOG_W(\"HELIX_HEVC10_DROP stream=%u ordinal=%llu frame=%llu shard=%u packet_sequence=%llu cached=1\",\n\t\t\t        stream_idx,\n\t\t\t        static_cast<unsigned long long>(helix_hevc10_frame_ordinal),\n\t\t\t        static_cast<unsigned long long>(shard.frame_idx),\n\t\t\t        shard.shard_idx,\n\t\t\t        static_cast<unsigned long long>(shard.packet_sequence));\n\t\t}\n\t\telse\n\t\t{\n\t\t\ttry\n\t\t\t{\n\t\t\t\tif (control)\n\t\t\t\t\tcnx->send_control(to_headset::video_stream_data_shard{shard});\n\t\t\t\telse\n\t\t\t\t\tcnx->send_stream(to_headset::video_stream_data_shard{shard});\n\t\t\t}\n\t\t\tcatch (...)\n\t\t\t{\n\t\t\t\t++helix_initial_send_errors;\n\t\t\t\t// Ignore network errors\n\t\t\t}\n\t\t}\n"""
+    new = """\t\thelix_current_frame_bytes += std::distance(begin, next);\n\t\thelix_current_frame_shards++;\n\n\t\tconst bool helix_hevc10_drop =\n\t\t        helix_hevc10_fault_enabled &&\n\t\t        helix_hevc10_fault_current_frame &&\n\t\t        !helix_hevc10_fault_dropped &&\n\t\t        !control && shard.packet_sequence != 0 && shard.shard_idx == 0;\n\t\tif (helix_hevc10_drop)\n\t\t{\n\t\t\thelix_hevc10_fault_dropped = true;\n\t\t\t++helix_hevc10_faults_injected;\n\t\t\tU_LOG_W(\"HELIX_HEVC10_DROP stream=%u ordinal=%llu frame=%llu shard=%u packet_sequence=%llu cached=1\",\n\t\t\t        stream_idx,\n\t\t\t        static_cast<unsigned long long>(helix_hevc10_frame_ordinal),\n\t\t\t        static_cast<unsigned long long>(shard.frame_idx),\n\t\t\t        shard.shard_idx,\n\t\t\t        static_cast<unsigned long long>(shard.packet_sequence));\n\t\t}\n\t\telse\n\t\t{\n\t\t\ttry\n\t\t\t{\n\t\t\t\tif (control)\n\t\t\t\t\tcnx->send_control(to_headset::video_stream_data_shard{shard});\n\t\t\t\telse\n\t\t\t\t\tcnx->send_stream(to_headset::video_stream_data_shard{shard});\n\t\t\t}\n\t\t\tcatch (...)\n\t\t\t{\n\t\t\t\t++helix_initial_send_errors;\n\t\t\t\t// Ignore network errors\n\t\t\t}\n\t\t}\n"""
     text = replace_once(text, old, new, "video_encoder.cpp deterministic drop")
     return text
 
 
 def transform_nvenc(text: str) -> str:
+    text = replace_once(
+        text,
+        "#include <algorithm>\n#include <stdexcept>\n",
+        "#include <algorithm>\n#include <cstdlib>\n#include <stdexcept>\n#include <string_view>\n",
+        "video_encoder_nvenc.cpp includes",
+    )
     old = """\t\tcase video_codec::h265:\n\t\t\tif (bitDepth == NV_ENC_BIT_DEPTH_10)\n\t\t\t{\n\t\t\t\tconfig.profileGUID = NV_ENC_HEVC_PROFILE_MAIN10_GUID;\n\t\t\t\tcheck_profile_guid_supported(shared_state, session_handle, encodeGUID, config.profileGUID, \"GPU doesn't support 10-bit depth with H.265 codec.\");\n\t\t\t}\n"""
     new = """\t\tcase video_codec::h265:\n\t\t\tif (bitDepth == NV_ENC_BIT_DEPTH_10)\n\t\t\t{\n\t\t\t\tconfig.profileGUID = NV_ENC_HEVC_PROFILE_MAIN10_GUID;\n\t\t\t\tcheck_profile_guid_supported(shared_state, session_handle, encodeGUID, config.profileGUID, \"GPU doesn't support 10-bit depth with H.265 codec.\");\n\t\t\t\tif (const char * helix_hevc10 = std::getenv(\"HELIX_HEVC10_RECOVERY\");\n\t\t\t\t    helix_hevc10 && std::string_view(helix_hevc10) == \"1\" && stream_idx < 2)\n\t\t\t\t{\n\t\t\t\t\tU_LOG_I(\"HELIX_HEVC10_MAIN10_PROFILE stream=%u profile=main10 input_bit_depth=10 output_bit_depth=10\", stream_idx);\n\t\t\t\t}\n\t\t\t}\n"""
     return replace_once(text, old, new, "video_encoder_nvenc.cpp Main10 marker")
@@ -126,9 +132,11 @@ def validate(outputs: dict[Path, str]) -> None:
             "HELIX_HEVC10_FAULT_PLAN",
             "HELIX_HEVC10_DROP",
             "HELIX_HEVC10_FAULT_SUMMARY",
-            "shard.shard_idx == 1",
+            "shard.shard_idx == 0",
         ],
         Path("server/encoder/video_encoder_nvenc.cpp"): [
+            "#include <cstdlib>",
+            "#include <string_view>",
             "NV_ENC_HEVC_PROFILE_MAIN10_GUID",
             "HELIX_HEVC10_MAIN10_PROFILE",
             "inputBitDepth = bitDepth",
@@ -180,7 +188,7 @@ def main() -> int:
     if args.check_only:
         print("CHECK_ONLY=PASS hevc10-decoder-recovery-v1 exact-base transactional")
         print(f"source_commit={BASE}")
-        print("fault_contract=one-cached-shard-withheld-per-eye ordinals=600,900 shard=1 normal-gap-rtx-only")
+        print("fault_contract=one-cached-shard0-withheld-per-eye ordinals=600,900 normal-gap-rtx-only")
         print("decoder_contract=exact-rtx-frame-AImage-plus-output-resume-after-incomplete-separated")
         print("pixel_cleanliness=NOT_ESTABLISHED")
         return 0
@@ -191,7 +199,7 @@ def main() -> int:
     print("APPLY=PASS hevc10-decoder-recovery-v1")
     print(f"source_parent={BASE}")
     print("modified_files=" + ",".join(str(p) for p in FILES))
-    print("fault_contract=one-cached-shard-withheld-per-eye ordinals=600,900 shard=1 normal-gap-rtx-only")
+    print("fault_contract=one-cached-shard0-withheld-per-eye ordinals=600,900 normal-gap-rtx-only")
     print("decoder_contract=exact-rtx-frame-AImage-plus-output-resume-after-incomplete-separated")
     print("pixel_cleanliness=NOT_ESTABLISHED")
     return 0

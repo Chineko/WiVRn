@@ -76,7 +76,12 @@ std::optional<uint16_t> shard_set::insert(data_shard && shard, xr::instance & in
 	if (data[idx])
 		return {};
 	if (shard.retransmission)
+	{
 		received_retransmission = true;
+		if (shard.shard_idx == 0)
+			spdlog::info("HELIX_HEVC10_RTX_RECEIVED stream={} frame={} packet_sequence={} shard=0",
+			             shard.stream_item_idx, shard.frame_idx, shard.packet_sequence);
+	}
 	data[idx] = std::move(shard);
 	return idx;
 }
@@ -195,6 +200,15 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 		payload.emplace_back(data_shards[idx]->payload);
 
 	bool frame_complete = last_idx == data_shards.size() and data_shards.back()->timing_info;
+	// Record retransmission completion before handing the frame to MediaCodec,
+	// so an asynchronous output callback cannot race ahead of the probe.
+	if (frame_complete && current.received_retransmission)
+	{
+		helix_diag::hevc10_note_rtx_assembled(current.feedback.stream_index, current.feedback.frame_index);
+		spdlog::info("HELIX_HEVC10_RTX_ASSEMBLED stream={} frame={}",
+		             current.feedback.stream_index, current.feedback.frame_index);
+	}
+
 	decoder_->push_data(payload, data_shards[shard_idx]->frame_idx, not frame_complete);
 
 	if (not frame_complete)
@@ -218,15 +232,6 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	{
 		spdlog::warn("first shard has no view_info");
 		return;
-	}
-
-	// Record retransmission completion before handing the frame to MediaCodec,
-	// so an asynchronous output callback cannot race ahead of the probe.
-	if (current.received_retransmission)
-	{
-		helix_diag::hevc10_note_rtx_assembled(current.feedback.stream_index, current.feedback.frame_index);
-		spdlog::info("HELIX_HEVC10_RTX_ASSEMBLED stream={} frame={}",
-		             current.feedback.stream_index, current.feedback.frame_index);
 	}
 
 	// Try to extract a frame

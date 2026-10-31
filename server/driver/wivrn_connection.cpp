@@ -287,6 +287,7 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 
 void wivrn::wivrn_connection::reset(std::stop_token stop, TCP && tcp, std::function<void()> tick)
 {
+	if (std::getenv("HELIX_ENCODED_PATH_PLAN")) throw std::runtime_error("representative session reconnect invalidates evidence");
 	if (stream)
 		stream = decltype(stream)();
 
@@ -296,6 +297,8 @@ void wivrn::wivrn_connection::reset(std::stop_token stop, TCP && tcp, std::funct
 
 void wivrn::wivrn_connection::shutdown()
 {
+	std::lock_guard guard(encoded_path_mutex);
+	if (encoded_path) encoded_path->close();
 	if (stream)
 		::shutdown(stream.get_fd(), SHUT_RDWR);
 	if (control)

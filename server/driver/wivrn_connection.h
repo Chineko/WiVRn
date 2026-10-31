@@ -21,9 +21,11 @@
 
 #include "wivrn_ipc.h"
 #include "wivrn_packets.h"
+#include "helix_encoded_path.h"
 #include "wivrn_sockets.h"
 
 #include <atomic>
+#include <memory>
 #include <optional>
 #include <poll.h>
 #include <stdexcept>
@@ -57,12 +59,41 @@ private:
 
 	from_headset::headset_info_packet info_packet;
 
+	std::unique_ptr<helix::encoded_path> encoded_path;
+	std::once_flag encoded_path_once;
+	std::mutex encoded_path_mutex;
+
 	void init(std::stop_token stop_token, std::function<void()> tick = []() {});
 
 public:
 	wivrn_connection(std::stop_token stop_token, encryption_state state, std::string pin, TCP && tcp);
 	wivrn_connection(const wivrn_connection &) = delete;
 	wivrn_connection & operator=(const wivrn_connection &) = delete;
+
+	~wivrn_connection() { if (encoded_path) encoded_path->close(); }
+
+	void send_stream(to_headset::video_stream_data_shard && packet)
+	{
+		// The server forks after accepting a connection. Start the worker lazily
+		// in the child that actually encodes; never inherit a parent worker/mutex.
+		std::call_once(encoded_path_once, [this] {
+			std::lock_guard guard(encoded_path_mutex);
+			if (const char * path = std::getenv("HELIX_ENCODED_PATH_PLAN"))
+			{
+				if (!has_stream()) throw std::runtime_error("representative path requires UDP");
+				encoded_path = std::make_unique<helix::encoded_path>(path);
+			}
+		});
+		if (encoded_path && packet.stream_item_idx < 2)
+		{
+			if (!has_stream() || !active) throw std::runtime_error("representative path requires active UDP");
+			encoded_path->push(packet, [this](auto & p) { stream.send(p); });
+		}
+		else if (active)
+		{
+			if (stream) stream.send(packet); else control.send(packet);
+		}
+	}
 
 	bool has_stream() const
 	{

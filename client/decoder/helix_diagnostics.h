@@ -186,6 +186,19 @@ inline hevc10_probe_state & hevc10_probe(uint8_t stream_index)
 	return hevc10_probe_states()[std::min<size_t>(stream_index, stream_count - 1)];
 }
 
+// An experiment permits one decoder epoch only. Reset stale state explicitly;
+// the reducer rejects recreation/flush instead of attributing across generations.
+inline uint64_t hevc10_begin_epoch(uint8_t stream_index)
+{
+	static std::array<uint64_t, stream_count> epochs{};
+	auto & state = hevc10_probe(stream_index);
+	std::scoped_lock lock(state.mutex);
+	state.pending_media = {};
+	state.pending_image = {};
+	state.rtx_assembled = state.rtx_media_output = state.image_after_rtx = state.overflow = 0;
+	return ++epochs[std::min<size_t>(stream_index, stream_count - 1)];
+}
+
 template <size_t N>
 inline bool hevc10_insert_unique(std::array<std::optional<uint64_t>, N> & slots, uint64_t frame_index)
 {

@@ -680,6 +680,7 @@ decoder::decoder(
         shard_accumulator * accumulator) :
         stream_index(stream_index), device(device), weak_scene(weak_scene), accumulator(accumulator)
 {
+	spdlog::info("HELIX_HEVC10_PROBE_EPOCH stream={} epoch={}", stream_index, wivrn::helix_diag::hevc10_begin_epoch(stream_index));
 	spdlog::info("hbm_mutex.native_handle() = {}", (void *)hbm_mutex.native_handle());
 
 	auto width = description.width;
@@ -852,6 +853,7 @@ void decoder::frame_completed(const wivrn::from_headset::feedback & feedback, co
 		auto completion = std::make_shared<std::promise<media_status_t>>();
 		auto future = completion->get_future();
 		jobs.push([this, completion, mc = media_codec.get()]() {
+			spdlog::error("HELIX_HEVC10_PROBE_INVALIDATED stream={} reason=flush", stream_index);
 			helix_begin_flush(this);
 
 			auto status = AMediaCodec_flush(mc);

@@ -97,6 +97,8 @@ private:
 
 	utils::sync_queue<input_buffer> input_buffers;
 	input_buffer current_input_buffer; // Only accessed in network thread
+	bool current_input_complete = false;
+	void submit_current_input(uint64_t frame_index);
 	utils::sync_queue<std::function<bool(void)>> jobs;
 
 	struct frame_info

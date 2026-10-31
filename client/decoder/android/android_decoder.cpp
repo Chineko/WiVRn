@@ -789,6 +789,7 @@ decoder::~decoder()
 
 void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame_index, bool partial)
 {
+	current_input_complete = false;
 	if (current_input_buffer.data == nullptr)
 		current_input_buffer = input_buffers.pop();
 	else if (current_input_buffer.frame_index != frame_index)
@@ -812,9 +813,15 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 		current_input_buffer.data_size += sub_data.size();
 	}
 
-	if (partial)
-		return;
+	current_input_complete = not partial;
+}
 
+void decoder::submit_current_input(uint64_t frame_index)
+{
+	if (!current_input_complete || !current_input_buffer.data ||
+	    current_input_buffer.frame_index != frame_index || !media_codec)
+		return;
+	current_input_complete = false;
 	jobs.push([=, this, idx = current_input_buffer.idx, data_size = current_input_buffer.data_size, mc = media_codec.get()]() {
 		uint64_t timestamp = frame_index * 10'000;
 		auto status = AMediaCodec_queueInputBuffer(mc, idx, 0, data_size, timestamp, 0);
@@ -844,6 +851,9 @@ void decoder::frame_completed(const wivrn::from_headset::feedback & feedback, co
 	        .view_info = view_info,
 	});
 	helix_note_submitted(this, weak_scene, stream_index, feedback);
+	// Both recovery probe and frame metadata now precede actual codec submission.
+	// An image callback can no longer outrun the frame_infos insertion above.
+	submit_current_input(feedback.frame_index);
 
 	if (helix_should_flush(this))
 	{

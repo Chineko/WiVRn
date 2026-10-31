@@ -21,6 +21,7 @@
 #include "driver/wivrn_session.h"
 
 #include "video_encoder.h"
+#include "helix_production_schedule.h"
 
 #include "encoder_settings.h"
 #include "os/os_time.h"
@@ -416,7 +417,8 @@ video_encoder::video_encoder(vk_bundle & vk,
 	U_LOG_I("Helix pacing telemetry %s stream=%u shard_spacing=%lluus", helix_pacing_telemetry_version, stream_idx, static_cast<unsigned long long>(helix_shard_spacing.count()));
 
 	const char * helix_hevc10 = std::getenv("HELIX_HEVC10_RECOVERY");
-	helix_hevc10_fault_enabled = helix_hevc10 && std::strcmp(helix_hevc10, "1") == 0 && stream_idx < 2;
+	helix_hevc10_fault_enabled = helix_hevc10 && std::strcmp(helix_hevc10, "1") == 0 && stream_idx < 2 &&
+	                            settings.codec == video_codec::h265 && settings.bit_depth == 10;
 	if (helix_hevc10_fault_enabled)
 	{
 		helix_hevc10_fault_target_ordinal = stream_idx == 0 ? 600 : 900;
@@ -732,6 +734,7 @@ void video_encoder::reset()
 
 void video_encoder::set_bitrate(uint32_t bitrate_bps)
 {
+	if (auto rate = helix::encoded_bitrate_override()) bitrate_bps = rate;
 	pending_bitrate = bitrate_bps * bitrate_multiplier;
 }
 

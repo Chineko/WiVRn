@@ -280,6 +280,18 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	// Move waited frame to rendering frame, clear waited.
 	comp_frame_move_and_clear_locked(&frame.rendering, &frame.waited);
 
+	if (production)
+	{
+		auto decision = production->now();
+		if (decision.skip)
+		{
+			comp_frame_clear_locked(&frame.rendering);
+			return XRT_SUCCESS;
+		}
+		if (decision.idrs)
+			for (size_t eye = 0; eye < 2; ++eye) encoders[eye]->reset();
+	}
+
 	U_LOG_IFL_D(log_level, "frame %ld commit %d layers", frame.rendering.id, layer_accum.layer_count);
 
 	if (encode_request >= 0 // encoders have not picked up the previous frame
@@ -693,6 +705,8 @@ compositor::compositor(wivrn_session & session) :
         squasher(vk, render_extent(session.get_info())),
         foveation(vk, images[0].image.info().extent)
 {
+	if (const char * path = std::getenv("HELIX_ENCODED_PRODUCTION_PLAN"))
+		production = std::make_unique<helix::production_schedule>(path);
 	comp_base * c_base = this;
 	// Ensure we can safely cast pointers
 	assert(intptr_t(&base) == intptr_t(this));

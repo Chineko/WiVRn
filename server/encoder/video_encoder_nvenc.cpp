@@ -713,6 +713,9 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 		NVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &buf_lock_params));
 	}
 
+	if (std::getenv("HELIX_ENCODED_PATH_PLAN") && stream_idx < 2 && buf_lock_params.pictureType == NV_ENC_PIC_TYPE_IDR)
+		U_LOG_I("HELIX_ENCODED_IDR stream=%u frame=%llu bytes=%u", stream_idx, (unsigned long long)frame_index, buf_lock_params.bitstreamSizeInBytes);
+
 	if (buf_lock_params.pictureType == NV_ENC_PIC_TYPE_NONREF_P)
 		idr_handler.set_non_ref(frame_index);
 

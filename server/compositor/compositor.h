@@ -27,6 +27,7 @@
 #include "encoder/encoder_settings.h"
 #include "foveation.h"
 #include "layer_squasher.h"
+#include "helix_production_schedule.h"
 #include "pacer.h"
 #include "utils/wivrn_vk_bundle.h"
 
@@ -75,6 +76,7 @@ private:
 		void add(float us);
 	};
 
+	std::unique_ptr<helix::production_schedule> production;
 	const u_logging_level log_level;
 	timings squasher_times;
 	timings foveation_times;

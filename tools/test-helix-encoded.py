@@ -68,5 +68,17 @@ class Oracle(unittest.TestCase):
         lines[a], lines[b] = lines[b], lines[a]
         self.assertEqual(runner.reduce(s, '\n'.join(lines), v, m)['runtime'], 'FAIL')
 
+
+    def test_production_coverage_is_required(self):
+        s, q, v, m = fixture()
+        m["producer_stalls"] = [(15000000, 15050000)]
+        m["idr_count"] = 1
+        s += "\nHELIX_PRODUCER_STALL_BEGIN index=0 at_us=15000010 end_us=15050000\nHELIX_PRODUCER_STALL_END index=0 at_us=15050010 observed=1\nHELIX_PRODUCER_IDR count=1 at_us=15050010"
+        for eye in (0, 1):
+            s += f"\nHELIX_ENCODED_IDR stream={eye} frame=1 bytes=60000\nHELIX_ENCODED_IDR stream={eye} frame=2 bytes=60000"
+        self.assertEqual(runner.reduce(s,q,v,m)["overall"], "PASS")
+        self.assertEqual(runner.reduce(s.replace("observed=1","observed=0"),q,v,m)["runtime"], "FAIL")
+        self.assertEqual(runner.reduce(s.replace("HELIX_ENCODED_IDR","REQUEST_ONLY"),q,v,m)["runtime"], "FAIL")
+
 if __name__ == '__main__':
     unittest.main()

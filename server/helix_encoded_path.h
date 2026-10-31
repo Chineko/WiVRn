@@ -17,6 +17,12 @@
 
 namespace wivrn::helix
 {
+inline std::chrono::steady_clock::time_point encoded_epoch()
+{
+	static const auto epoch = std::chrono::steady_clock::now();
+	return epoch;
+}
+
 struct path_event
 {
 	long long start, loss_end, end;
@@ -153,7 +159,7 @@ public:
 		if (packet.stream_item_idx > 1)
 			throw std::runtime_error("unexpected encoded stream");
 		if (origin == clock::time_point{})
-			origin = clock::now();
+			origin = encoded_epoch();
 		auto generated = std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - origin).count();
 		auto [drop, ready] = plan.decide(generated, free_at);
 		if (drop)

@@ -55,7 +55,8 @@ def model():
     spec.loader.exec_module(module)
     return module
 
-def prepare(out, pacing_log, seed):
+def prepare(out, pacing_log, seed, encoder_bitrate):
+    require(4_000_000 <= encoder_bitrate <= 200_000_000, 'encoder bitrate outside bounded range')
     m = model()
     cal = m.parse_pacing_log(pacing_log)
     # The old parser leaves shards_mean at its unrelated default. Use the actual
@@ -80,12 +81,17 @@ def prepare(out, pacing_log, seed):
     # not fabricated by claiming exact replay of independent eye completion times.
     (out / 'frames.plan').write_text('HELIX_ENCODED_FRAMES 1\n' + ''.join(
         f'{a[4]} {a[2]} {b[2]}\n' for a, b in zip(eyes[0], eyes[1])))
+    idrs = [a[4] for a in eyes[0] if a[5]]
+    (out / 'production.plan').write_text('HELIX_ENCODED_PRODUCTION 1\n' +
+        ''.join(f'S {start} {end}\n' for start, end in tr['stall_spans']) +
+        ''.join(f'I {at}\n' for at in idrs))
     m.write_trace(tr, out / 'model.trace')
     shutil.copyfile(pacing_log, out / 'calibration-source.log')
     stats.update({'seed': seed, 'duration_s': 300, 'profile': 'torture', 'calibration': cal,
                   'path_events': events, 'producer_stalls': tr['stall_spans'],
                   'source_log': str(pacing_log), 'source_log_sha256': digest(pacing_log),
                   'warmup_override_s': 15, 'frame_count': len(eyes[0]),
+                  'encoder_bitrate_bps': encoder_bitrate, 'idr_count': len(idrs),
                   'limitations': ['content complexity is a deterministic surrogate',
                     'actual encoded sizes/cadence must pass a separate runtime calibration gate',
                     'shared path event shapes/drain priors retain the existing model assumptions',
@@ -160,6 +166,16 @@ def reduce(server, quest, stimulus, spec):
     def check(ok, label):
         if not ok: errors.append(label)
     evidence = {}
+    stalls = spec.get('producer_stalls', [])
+    begins = events(server, 'HELIX_PRODUCER_STALL_BEGIN')
+    ends = events(server, 'HELIX_PRODUCER_STALL_END')
+    check(len(begins) == len(ends) == len(stalls), 'production_stall_count')
+    for i, (start, end) in enumerate(stalls):
+        b = [x for x in begins if x.get('index') == str(i)]
+        e = [x for x in ends if x.get('index') == str(i)]
+        check(len(b) == len(e) == 1 and start <= int(b[0].get('at_us', '-1')) < end and
+              int(e[0].get('at_us', '-1')) >= end and e[0].get('observed') == '1', f'production_stall_{i}')
+    check(sum(int(x.get('count', '0')) for x in events(server, 'HELIX_PRODUCER_IDR')) == spec.get('idr_count', 0), 'production_idr_requests')
     for eye in (0, 1):
         select = lambda tag: [e for e in events(server, tag) if e.get('stream') == str(eye)]
         qselect = lambda tag: [e for e in events(quest, tag) if e.get('stream') == str(eye)]
@@ -167,6 +183,8 @@ def reduce(server, quest, stimulus, spec):
                   for e in select('HELIX_HEVC10_ENCODER_GATE')), f'eye{eye}:encoder_gate')
         check(any(e.get('profile') == 'main10' and e.get('input_bit_depth') == '10' and e.get('output_bit_depth') == '10'
                   for e in select('HELIX_HEVC10_MAIN10_PROFILE')), f'eye{eye}:main10')
+        if spec.get('idr_count', 0):
+            check(len(select('HELIX_ENCODED_IDR')) >= spec['idr_count'] + 1, f'eye{eye}:actual_idr_coverage')
         drop = select('HELIX_HEVC10_DROP')
         check(len(drop) == 1, f'eye{eye}:unique_canary_drop')
         if len(drop) == 1:
@@ -303,7 +321,7 @@ def run(bundle, out):
                 gate.get('seal_sha256') == digest(bundle / 'seal.json') and
                 digest(gate['report']) == gate['report_sha256'], 'full audits absent or stale')
         save(out / 'input-seal.json', seal)
-        for name in ('model.json', 'frames.plan', 'path.plan', 'audits.json'):
+        for name in ('model.json', 'frames.plan', 'path.plan', 'production.plan', 'audits.json'):
             shutil.copyfile(bundle / name, out / name)
         route = command(['ip', '-4', 'route', 'get', QUEST])
         (out / 'route.txt').write_text(route)
@@ -338,7 +356,10 @@ def run(bundle, out):
                   'openvr-compat-path': None}
         save(out / 'config.json', config)
         env = os.environ.copy()
-        env.update(HELIX_HEVC10_RECOVERY='1', HELIX_ENCODED_PATH_PLAN=str(bundle / 'path.plan'))
+        spec = json.loads((bundle / 'model.json').read_text())
+        env.update(HELIX_HEVC10_RECOVERY='1', HELIX_ENCODED_PATH_PLAN=str(bundle / 'path.plan'),
+                   HELIX_ENCODED_PRODUCTION_PLAN=str(bundle / 'production.plan'),
+                   HELIX_ENCODED_BITRATE_BPS=str(spec['encoder_bitrate_bps']))
         env['XR_RUNTIME_JSON'] = seal['manifest']
         # Logcat is bounded by the run and starts before launch; no global log clear.
         capture = (out / 'quest.log').open('w')
@@ -430,6 +451,7 @@ def main():
     p.add_argument('--output', type=absolute, required=True)
     p.add_argument('--pacing-log', type=absolute, required=True)
     p.add_argument('--seed', type=int, default=20261031)
+    p.add_argument('--encoder-bitrate', type=int, required=True)
     p = sub.add_parser('run')
     p.add_argument('--bundle', type=absolute, required=True)
     p.add_argument('--output', type=absolute, required=True)
@@ -440,7 +462,7 @@ def main():
     for n in ('server', 'quest', 'stimulus', 'model', 'output'):
         p.add_argument('--' + n, type=absolute, required=True)
     a = ap.parse_args()
-    if a.action == 'prepare': prepare(a.output, a.pacing_log, a.seed); return 0
+    if a.action == 'prepare': prepare(a.output, a.pacing_log, a.seed, a.encoder_bitrate); return 0
     if a.action == 'run': return run(a.bundle, a.output)
     if a.action == 'build': build(a.bundle, a.build_dir); return 0
     result = reduce(a.server.read_text(), a.quest.read_text(), a.stimulus.read_text(), json.loads(a.model.read_text()))

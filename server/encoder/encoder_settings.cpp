@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "encoder_settings.h"
+#include "helix_production_schedule.h"
 
 #include "driver/configuration.h"
 #include "driver/wivrn_session.h"
@@ -404,7 +405,7 @@ std::array<encoder_settings, 3> get_encoder_settings(wivrn::vk_bundle & bundle, 
 	for (auto & i: res)
 		i.bit_depth = bit_depth.value_or(10);
 
-	split_bitrate(res, settings.bitrate_bps);
+	split_bitrate(res, helix::encoded_bitrate_override() ? helix::encoded_bitrate_override() : settings.bitrate_bps);
 	return res;
 }
 } // namespace wivrn

@@ -16,7 +16,7 @@ TEMPLATE_REL="server/dist/openxr_manifest.in.json"
 SERVER_CMAKE_REL="server/CMakeLists.txt"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git cmake find realpath file nm sha256sum awk grep python3 mkdir cp sort; do
+for c in git cmake find realpath file nm sha256sum awk grep python3 mkdir cp sort chmod; do
   command -v "$c" >/dev/null 2>&1 || fail "missing command $c"
 done
 [[ -d "$WORKTREE/.git" || -f "$WORKTREE/.git" ]] || fail "exact-source worktree missing: $WORKTREE"

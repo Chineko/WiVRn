@@ -5,7 +5,7 @@ BASE_RUNNER_COMMIT="0df0d1fead1189e01293cc61e2a4dff56f0490c0"
 BASE_RUNNER_PATH="tools/helix-run-hevc10-decoder-recovery-v1.sh"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git python3 bash grep; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
+for c in git python3 bash grep mktemp cp; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
 
 git cat-file -e "${BASE_RUNNER_COMMIT}^{commit}" 2>/dev/null || git fetch origin "$BASE_RUNNER_COMMIT"
 git cat-file -e "${BASE_RUNNER_COMMIT}^{commit}" 2>/dev/null || fail "pinned base runner commit unavailable"

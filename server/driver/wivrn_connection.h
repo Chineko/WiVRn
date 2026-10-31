@@ -25,6 +25,7 @@
 #include "wivrn_sockets.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <poll.h>
@@ -87,11 +88,11 @@ public:
 		if (encoded_path && packet.stream_item_idx < 2)
 		{
 			if (!has_stream() || !active) throw std::runtime_error("representative path requires active UDP");
-			encoded_path->push(packet, [this](auto & p) { stream.send(p); });
+			encoded_path->push(packet, [this](auto & p) { stream.send(std::move(p)); });
 		}
 		else if (active)
 		{
-			if (stream) stream.send(packet); else control.send(packet);
+			if (stream) stream.send(std::move(packet)); else control.send(std::move(packet));
 		}
 	}
 

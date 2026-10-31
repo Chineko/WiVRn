@@ -49,3 +49,11 @@ Supported inference: the UDP lane can exercise the actual recovery mechanism wit
 Remaining ambiguity: content surrogate fidelity, real encode-size distribution, actual scheduling accuracy, device clock/frame handling, compositor response to production stalls and pixel contents.
 
 Decision: finish artifact builds, audit the final complete path, then execute one bounded run. Any failure resets the gates and is inspected before repair or another run. Do not retune frozen acceptance criteria to match observed device results.
+
+## Serialization build failure audit and repair
+
+Direct evidence: first server build rejected the three new lvalue sends; typed_socket::send is constrained by not_lvalue_reference. Its implementation serializes through const references and sends synchronously, so moving the argument into that API preserves the queued payload lifetime through completion. All three new calls were audited together and changed to rvalue forwarding. The full failed build log is retained.
+
+Full Audit A after failure: rechecked plan parsing/bounds, copied payload lifetime, shared FIFO/worker state, post-fork lazy initialization, reconnect rejection, error counters, shutdown/join, client probe ordering/epoch invalidation, exact sequence logging, all new socket calls, Python subprocess/error/cleanup paths, final build/manifest/seal checks and reducer mutations. Build gate may reopen after the rvalue repair; runtime remains closed pending final artifacts.
+
+Full Audit B after failure: the question, frozen per-eye oracle, independent traffic calibration, observation boundaries, competing disabled-path/observer/decoder/capture failures, synthetic frame clock mapping, retained source/data provenance and queue/resource effects are unchanged. No runtime evidence exists; a compiled artifact cannot substitute. Runtime is still prohibited until the complete final artifact and executable chain passes both audits.

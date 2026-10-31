@@ -125,12 +125,18 @@ def main() -> int:
 
     if git("rev-parse", "HEAD") != BASE:
         raise RuntimeError(f"expected HEAD {BASE}")
-    dirty = set()
-    for line in git("status", "--porcelain").splitlines():
-        if line:
-            dirty.add(line[3:])
-    if dirty != EXPECTED_DIRTY:
-        raise RuntimeError(f"expected exact six-file v1 dirty set, got {sorted(dirty)}")
+
+    tracked_dirty = set(filter(None, git("diff", "--name-only").splitlines()))
+    if tracked_dirty != EXPECTED_DIRTY:
+        missing = sorted(EXPECTED_DIRTY - tracked_dirty)
+        extra = sorted(tracked_dirty - EXPECTED_DIRTY)
+        raise RuntimeError(
+            f"expected exact six-file v1 tracked dirty set; missing={missing} extra={extra} got={sorted(tracked_dirty)}"
+        )
+
+    untracked = list(filter(None, git("ls-files", "--others", "--exclude-standard").splitlines()))
+    if untracked:
+        raise RuntimeError(f"unexpected untracked files present: {sorted(untracked)}")
 
     diag0 = DIAG.read_text()
     android0 = ANDROID.read_text()
@@ -139,15 +145,17 @@ def main() -> int:
     validate(diag1, android1)
 
     if args.check_only:
-        print("CHECK_ONLY=PASS hevc10-media-image-oracle-repair-v1")
+        print("CHECK_ONLY=PASS hevc10-media-image-oracle-repair-v2")
         print(f"source_parent={BASE}")
+        print("dirty_gate=PASS exact-six-tracked-no-untracked")
         print("formal_rtx_decoder_oracle=exact-MediaCodec-output-plus-AImage-at-or-after-recovered-frame")
         print("pixel_cleanliness=NOT_ESTABLISHED")
         return 0
 
     DIAG.write_text(diag1)
     ANDROID.write_text(android1)
-    print("APPLY=PASS hevc10-media-image-oracle-repair-v1")
+    print("APPLY=PASS hevc10-media-image-oracle-repair-v2")
+    print("dirty_gate=PASS exact-six-tracked-no-untracked")
     print("formal_rtx_decoder_oracle=exact-MediaCodec-output-plus-AImage-at-or-after-recovered-frame")
     print("pixel_cleanliness=NOT_ESTABLISHED")
     return 0

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_COMMIT="392bb662ed20c6866af0942d219359518a885193"
-BUILD_TOOLING_COMMIT="999b6a0d0a693720ef243fb3a9e4e2d90b71f74b"
+BUILD_TOOLING_COMMIT="d06a8dea063ec93c3c07c063a92b91fa431bcf3b"
 OUT_ROOT="$HOME/helix-hevc10-decoder-recovery-v1-runtime"
 WORKTREE="$OUT_ROOT/worktree"
 BUILD_DIR="$WORKTREE/build-server"
@@ -19,7 +19,7 @@ META="$HELPER_ROOT/metadata.txt"
 SEAL="$HELPER_ROOT/seal.txt"
 
 fail(){ echo "FAIL: $*" >&2; exit 2; }
-for c in git sha256sum awk grep find realpath file nm python3 sort tail; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
+for c in git sha256sum awk grep find realpath file nm python3 sort tail cat; do command -v "$c" >/dev/null 2>&1 || fail "missing command $c"; done
 [[ -d "$WORKTREE" && -d "$BUILD_DIR" ]] || fail "exact-source worktree/build-server missing"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || fail "worktree source mismatch"
 [[ -z "$(git -C "$WORKTREE" status --short)" ]] || fail "worktree source dirty"

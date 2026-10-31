@@ -74,7 +74,7 @@ public:
 
 	~wivrn_connection() { if (encoded_path) encoded_path->close(); }
 
-	void send_stream(to_headset::video_stream_data_shard && packet)
+	void send_stream(to_headset::video_stream_data_shard && packet) try
 	{
 		// The server forks after accepting a connection. Start the worker lazily
 		// in the child that actually encodes; never inherit a parent worker/mutex.
@@ -98,6 +98,12 @@ public:
 		{
 			if (stream) stream.send(std::move(packet)); else control.send(std::move(packet));
 		}
+	}
+
+	catch (...)
+	{
+		active = false;
+		throw;
 	}
 
 	bool has_stream() const

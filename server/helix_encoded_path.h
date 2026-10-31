@@ -175,7 +175,10 @@ public:
 			packet.payload = payload;
 			sender(packet);
 			if (packet.retransmission)
+			{
+				std::fprintf(stderr, "HELIX_HEVC10_RTX_SENT stream=%u frame=%llu packet_sequence=%llu actual_send=1\n", unsigned(packet.stream_item_idx), (unsigned long long)packet.frame_idx, (unsigned long long)packet.packet_sequence);
 				std::fprintf(stderr, "HELIX_PATH_RTX_DELIVERED stream=%u frame=%llu packet_sequence=%llu\n", unsigned(packet.stream_item_idx), (unsigned long long)packet.frame_idx, (unsigned long long)packet.packet_sequence);
+			}
 		};
 		pending.push_back({origin + std::chrono::microseconds(ready), packet.payload.size(), std::move(send)});
 		peak_packets = std::max(peak_packets, pending.size());

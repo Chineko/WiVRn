@@ -702,7 +702,9 @@ bool video_encoder::retransmit_cached(uint64_t packet_sequence)
 		    packet_sequence == *helix_hevc10_fault_packet_sequence)
 		{
 			++helix_hevc10_exact_rtx_sent;
-			U_LOG_I("HELIX_HEVC10_RTX_SENT stream=%u frame=%llu packet_sequence=%llu exact_canary=1",
+			U_LOG_I(std::getenv("HELIX_ENCODED_PATH_PLAN")
+			                ? "HELIX_HEVC10_RTX_QUEUED stream=%u frame=%llu packet_sequence=%llu exact_canary=1"
+			                : "HELIX_HEVC10_RTX_SENT stream=%u frame=%llu packet_sequence=%llu exact_canary=1",
 			        stream_idx,
 			        static_cast<unsigned long long>(helix_hevc10_fault_frame_index.value_or(0)),
 			        static_cast<unsigned long long>(packet_sequence));

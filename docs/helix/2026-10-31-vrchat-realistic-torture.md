@@ -99,9 +99,11 @@ HELIX_SYNTHETIC_TRACE=/tmp/vrchat.trace HELIX_SYNTHETIC_TRACE_SEND_LOG=/tmp/send
     wivrn-server --helix-synthetic-transport
 ```
 
-Result line: `HELIX_VRCHAT_TRACE_RESULT`. `false_complete` must be 0. `false_incomplete` plus
-`silent_expected_complete` must stay under 0.5% of frames; that budget is my provisional
-number, not a measured one.
+Result line: `HELIX_VRCHAT_TRACE_RESULT`. This first lane is characterization, not a
+post-hoc percentage promotion gate. Clean frames must remain complete, a damaged frame may only
+complete after all modeled omitted sequences were retransmitted, and two deterministic single-
+shard-0 RTX canaries (one per eye) must both recover. Representative damaged-frame recovery is
+reported, not thresholded.
 
 ### What was verified here, and what was not
 
@@ -112,5 +114,5 @@ accepts a 300 s trace (1.12 M rows) and rejects 8 mutated traces, including an e
 at p50 0.1 us, p99 35 us, p99.9 ~1 ms, max 3.1 ms lateness on a shared cloud VM.
 
 Not verified: linking or running the server, any Quest run, whether the receiver completes
-frames delivered late in order, and whether the 0.5% budget is sensible. The raw 256x160
+frames delivered late in order, and the representative damaged-frame recovery distribution before any promotion threshold is frozen. The raw 256x160
 decoder does not exercise HEVC decode, Quest thermals or VRChat CPU/GPU load.

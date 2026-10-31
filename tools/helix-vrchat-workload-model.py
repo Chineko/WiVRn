@@ -205,9 +205,16 @@ def generate(seed, duration_s, profile, cal=CAL):
             if idr:
                 size *= rng.uniform(*cal["idr_multiplier"])
             nbytes = int(clip(size, 4000, cap))
+            edge_payload = min(1200, cal["shard_payload"])
             nshards = -(-nbytes // cal["shard_payload"])
             nshards = min(nshards, cal["shards_max"])
-            nbytes = min(nbytes, nshards * cal["shard_payload"])
+            def capacity(n):
+                if n == 1:
+                    return edge_payload
+                return (n - 2) * cal["shard_payload"] + 2 * edge_payload
+            while nshards < cal["shards_max"] and nbytes > capacity(nshards):
+                nshards += 1
+            nbytes = min(nbytes, capacity(nshards))
             spacing = cal["pacer_spacing_us"]
             if rng.random() < cal["slow_send_p"]:
                 spacing = rng.uniform(*cal["slow_send_ms"]) * 1000 / nshards
@@ -217,9 +224,11 @@ def generate(seed, duration_s, profile, cal=CAL):
             frame_meta.append((s, f, nbytes, nshards, int(t0), idr))
             rem = nbytes
             for sh in range(nshards):
-                pb = min(cal["shard_payload"], rem)
+                cap_shard = edge_payload if sh == 0 or sh == nshards - 1 else cal["shard_payload"]
+                pb = min(cap_shard, rem)
                 rem -= pb
                 packets.append((int(t0 + sh * spacing), s, f, sh, nshards, pb))
+            assert rem == 0
     packets.sort(key=lambda p: (p[0], p[1], p[3]))
 
     # FIFO path model.
@@ -239,9 +248,25 @@ def generate(seed, duration_s, profile, cal=CAL):
         out_free = ts + cal["drain_gap_us"]
         max_delay = max(max_delay, ts - tg)
         rows.append((tg, ts, s, f, sh, ns, pb))
+
+    # Explicit transport-recovery canaries: one single shard-0 omission per eye.
+    # This uses the already-proven WiVRn RTX condition where view_info has not arrived yet,
+    # so no synthetic/future headset display clock is required.
+    rtx_canary_frames = {}
+    rows = list(rows)
+    for wanted_stream in (0, 1):
+        for i, row in enumerate(rows):
+            tg, ts, s, f, sh, ns, pb = row
+            if s == wanted_stream and sh == 0 and ts is not None and (s, f) not in drop_frames and tg >= 1_000_000:
+                rows[i] = (tg, None, s, f, sh, ns, pb)
+                drop_frames.add((s, f))
+                rtx_canary_frames[s] = f
+                break
+    if len(rtx_canary_frames) != 2:
+        raise RuntimeError("failed to place both RTX canaries")
     return {
         "rows": rows, "events": events, "stall_spans": stall_spans, "frame_meta": frame_meta,
-        "drop_frames": drop_frames, "max_delay_us": max_delay, "seed": seed,
+        "drop_frames": drop_frames, "rtx_canary_frames": rtx_canary_frames, "max_delay_us": max_delay, "seed": seed,
         "duration_s": duration_s, "profile": profile,
     }
 
@@ -288,6 +313,7 @@ def stats(tr, cal=CAL):
     out["dropped_packets"] = len(rows) - len(kept)
     out["pps_total"] = len(rows) / dur
     out["frames_expected_incomplete"] = len(tr["drop_frames"])
+    out["rtx_canary_frames"] = {str(k): v for k, v in tr.get("rtx_canary_frames", {}).items()}
     out["max_path_delay_ms"] = tr["max_delay_us"] / 1000
     out["delayed_gt15ms"] = sum(1 for r in kept if r[1] - r[0] > 15000)
     out["delayed_gt30ms"] = sum(1 for r in kept if r[1] - r[0] > 30000)
@@ -321,18 +347,22 @@ def calibration_failures(st, cal=CAL):
 def parse_pacing_log(path):
     """Re-pin size/cadence numbers from 'Helix pacing baseline stream N:' lines."""
     rx = re.compile(r"frame_bytes\(avg/max\)=(\d+)/(\d+) frame_shards\(avg/max\)=(\d+)/(\d+).*?inter_frame_gap\(avg/max\)=(\d+)/(\d+)us")
-    means, maxes, smax = [], [], []
+    means, maxes, smax, gaps = [], [], [], []
     for line in open(path, errors="replace"):
         if "Helix pacing baseline stream" in line:
             m = rx.search(line)
             if m:
-                means.append(int(m[1])); maxes.append(int(m[2])); smax.append(int(m[4]))
+                means.append(int(m[1])); maxes.append(int(m[2])); smax.append(int(m[4])); gaps.append(int(m[5]))
     if not means:
         raise SystemExit(f"no 'Helix pacing baseline' lines parsed in {path}")
     cal = dict(CAL)
     cal["frame_bytes_mean"] = sum(means) / len(means)
     cal["frame_bytes_max"] = max(maxes)
     cal["shards_max"] = max(smax)
+    gap_mean_us = sum(gaps) / len(gaps)
+    if gap_mean_us <= 0:
+        raise SystemExit("invalid measured inter-frame gap")
+    cal["fps"] = 1_000_000.0 / gap_mean_us
     return cal
 
 

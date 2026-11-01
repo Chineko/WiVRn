@@ -2,6 +2,7 @@
 // Derived from the local sealed Vulkan stimulus; see encoded workload audit.
 #define XR_USE_GRAPHICS_API_VULKAN
 #define XR_USE_TIMESPEC
+#include "helix-stimulus-pattern.h"
 #include <vulkan/vulkan.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -326,21 +327,15 @@ int main(int argc, char ** argv)
 
 	for (uint32_t pattern = 0; pattern < 32u; ++pattern)
 	{
-		uint32_t seed = 0x6d2b79f5u ^ (0x9e3779b9u * (pattern + 1u));
+		uint32_t seed = helix_stimulus::noise_seed;
 		for (uint32_t eye = 0; eye < 2u; ++eye)
 		{
 			for (uint32_t y = 0; y < height; ++y)
 			{
 				for (uint32_t x = 0; x < width; ++x)
 				{
-					seed ^= seed << 13;
-					seed ^= seed >> 17;
-					seed ^= seed << 5;
-					const uint32_t tile = ((x >> 5u) ^ (y >> 5u) ^ eye ^ pattern) & 1u;
-					const uint32_t base_rgb = tile ? 0x00c06020u : 0x002040c0u;
-					const uint32_t noise = pattern * 255u / 31u;
-					const uint32_t mask = noise | (noise << 8) | (noise << 16);
-					const uint32_t rgb = (base_rgb & ~mask) | (seed & mask);
+					const auto noise = helix_stimulus::next_noise(seed);
+					const auto rgb = helix_stimulus::pixel(helix_stimulus::base_pixel(eye, x, y), noise, pattern);
 					const VkDeviceSize pixel =
 					        (VkDeviceSize(pattern) * 2u + eye) * VkDeviceSize(width) * VkDeviceSize(height) +
 					        VkDeviceSize(y) * VkDeviceSize(width) + x;
@@ -358,7 +353,7 @@ int main(int argc, char ** argv)
 		flush.size = VK_WHOLE_SIZE;
 		vk_ok(vkFlushMappedMemoryRanges(device, 1, &flush), "vkFlushMappedMemoryRanges_staging");
 	}
-	std::fprintf(stderr, "HELIX_VULKAN_ENTROPY patterns=32 mapping=target_bytes_to_noise_level upload_bytes=%llu\n", static_cast<unsigned long long>(upload_bytes));
+	std::fprintf(stderr, "HELIX_VULKAN_ENTROPY patterns=32 mapping=shared_noise_linear_blend_v2 upload_bytes=%llu\n", static_cast<unsigned long long>(upload_bytes));
 	std::fflush(stderr);
 
 	bool running = false;

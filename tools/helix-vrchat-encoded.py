@@ -282,6 +282,31 @@ def events(text, tag):
     ]
 
 
+def correlate_peak_sources(server, stimulus, peaks):
+    """Join exact monotonic identities, never nearest-frame estimates."""
+    by_time, errors, joined = {}, [], {}
+    for row in events(stimulus, "HELIX_STIMULUS_INPUT"):
+        key = row.get("source_ns")
+        if key in by_time:
+            errors.append("duplicate_stimulus_timestamp")
+        by_time[key] = row
+    for eye in (0, 1):
+        source = [r for r in events(server, "HELIX_PEAK_SOURCE") if r.get("stream") == str(eye)]
+        try:
+            require(len(source) == 1, "source count")
+            row = source[0]
+            require(row["frame"] == peaks[str(eye)]["encoder"]["frame"], "peak frame")
+            current, previous = [by_time[row[k]] for k in ("source_ns", "previous_source_ns")]
+            require(int(current["source_ns"]) >= int(previous["source_ns"]) > 0, "time order")
+            require(int(current["index"]) >= int(previous["index"]) >= 0, "index order")
+            for item in (current, previous):
+                require(all(0 <= int(item[f"level{e}"]) <= 31 for e in (0, 1)), "level bounds")
+            joined[str(eye)] = {"current": current, "previous_encoded_input": previous}
+        except (KeyError, ValueError, RuntimeError):
+            errors.append(f"eye{eye}:source_identity_missing_or_invalid")
+    return joined, errors
+
+
 def reduce(server, quest, stimulus, spec):
     errors = []
 
@@ -491,6 +516,7 @@ def reduce(server, quest, stimulus, spec):
             valid = False
         if not valid:
             peak_errors.append(f"eye{eye}:peak_identity_or_size_mismatch")
+    sources, source_errors = correlate_peak_sources(server, stimulus, peaks)
     return {
         "runtime": "PASS" if not errors else "FAIL",
         "errors": errors,
@@ -503,8 +529,11 @@ def reduce(server, quest, stimulus, spec):
         "peak_diagnostics": "PASS" if not peak_errors else "NOT_ESTABLISHED",
         "peak_errors": peak_errors,
         "peaks": peaks,
+        "source_correlation": "PASS" if not source_errors else "NOT_ESTABLISHED",
+        "source_errors": source_errors,
+        "peak_sources": sources,
         "overall": "PASS"
-        if not errors and not calibration and not peak_errors
+        if not errors and not calibration and not peak_errors and not source_errors
         else "NOT_ESTABLISHED",
     }
 

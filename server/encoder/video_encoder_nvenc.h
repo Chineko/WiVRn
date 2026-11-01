@@ -66,6 +66,9 @@ private:
 	uint64_t helix_peak_frame = 0;
 	uint64_t helix_peak_output_timestamp = 0;
 	uint64_t helix_peak_invalidations = 0;
+	int64_t helix_peak_source_ns = 0;
+	int64_t helix_peak_previous_source_ns = 0;
+	int64_t helix_previous_source_ns = 0;
 	uint32_t helix_peak_bytes = 0;
 	uint32_t helix_peak_qp = 0;
 	NV_ENC_PIC_TYPE helix_peak_type = NV_ENC_PIC_TYPE_UNKNOWN;

@@ -85,6 +85,8 @@ private:
 
 public:
 	const uint8_t stream_idx;
+	// Diagnostic context: only written/read on the compositor encoding thread.
+	int64_t helix_source_timestamp_ns = 0;
 	const uint32_t target_queue;
 	const bool need_transfer;
 	// Layout the encoder needs y_cbcr to arrive in. Set during construction

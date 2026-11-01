@@ -25,6 +25,7 @@ def fixture():
             f"HELIX_HEVC10_FAULT_SUMMARY stream={eye} injected=1 exact_rtx_sent=1 pending_sequence=no",
             f"HELIX_ENCODED_PEAK stream={eye} frame=50 output_timestamp=50 bytes=60000 picture_type=0 avg_qp=20 invalidations_applied=0",
             f"HELIX_PAYLOAD_PEAK stream={eye} frame=50 bytes=60000",
+            f"HELIX_PEAK_SOURCE stream={eye} frame=50 source_ns=100 previous_source_ns=99",
             f"Helix pacing baseline stream {eye}: frames=27000 frame_bytes(avg/max)=30000/60000 inter_frame_gap(avg/max)=11111/80000us",
         ]
         q += [
@@ -41,7 +42,11 @@ def fixture():
     return (
         "\n".join(s),
         "\n".join(q),
-        "HELIX_VULKAN_DONE frames=27000 attempts=27001",
+        (
+            "HELIX_STIMULUS_INPUT index=0 source_ns=99 level0=1 level1=2\n"
+            "HELIX_STIMULUS_INPUT index=1 source_ns=100 level0=2 level1=3\n"
+            "HELIX_VULKAN_DONE frames=27000 attempts=27001"
+        ),
         {
             "frame_count": 27000,
             "calibration": {"frame_bytes_mean": 30000, "frame_bytes_max": 60000, "fps": 90},
@@ -50,6 +55,21 @@ def fixture():
 
 
 class Oracle(unittest.TestCase):
+    def test_source_join_rejects_ambiguity(self):
+        s, q, v, m = fixture()
+        for a, b in (
+            (s.replace("source_ns=100", "source_ns=101"), v),
+            (s.replace("frame=50 source_ns", "frame=51 source_ns"), v),
+            (s, v + "\nHELIX_STIMULUS_INPUT index=2 source_ns=100 level0=1 level1=2"),
+            (s, v.replace("level0=2", "level0=32")),
+            (s.replace("previous_source_ns=99", "previous_source_ns=0"), v),
+        ):
+            with self.subTest(a=a, b=b):
+                result = runner.reduce(a, q, b, m)
+                self.assertEqual(result["source_correlation"], "NOT_ESTABLISHED")
+                self.assertEqual(result["overall"], "NOT_ESTABLISHED")
+                self.assertEqual(result["hevc10_recovery"], "PASS")
+
     def test_peak_evidence_is_independent_and_exact(self):
         s, q, v, m = fixture()
         for a in (

@@ -55,6 +55,7 @@ public:
 		vk::raii::ImageView view_cbcr;
 		to_headset::video_stream_data_shard::view_info_t view_info{};
 		uint64_t frame_index;
+		int64_t helix_source_timestamp_ns = 0;
 	};
 
 private:

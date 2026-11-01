@@ -524,6 +524,12 @@ video_encoder_nvenc::video_encoder_nvenc(
 video_encoder_nvenc::~video_encoder_nvenc()
 {
 	if (helix_peak_bytes)
+	{
+		U_LOG_I("HELIX_PEAK_SOURCE stream=%u frame=%llu source_ns=%lld previous_source_ns=%lld",
+		        stream_idx,
+		        (unsigned long long)helix_peak_frame,
+		        (long long)helix_peak_source_ns,
+		        (long long)helix_peak_previous_source_ns);
 		U_LOG_I("HELIX_ENCODED_PEAK stream=%u frame=%llu output_timestamp=%llu bytes=%u picture_type=%u avg_qp=%u invalidations_applied=%llu",
 		        stream_idx,
 		        (unsigned long long)helix_peak_frame,
@@ -532,6 +538,7 @@ video_encoder_nvenc::~video_encoder_nvenc()
 		        unsigned(helix_peak_type),
 		        helix_peak_qp,
 		        (unsigned long long)helix_peak_invalidations);
+	}
 	size_t pending_invalidations = 0;
 	{
 		std::scoped_lock lock(helix_invalidation_mutex);
@@ -727,6 +734,8 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 		if (buf_lock_params.bitstreamSizeInBytes > helix_peak_bytes)
 		{
 			helix_peak_frame = frame_index;
+			helix_peak_source_ns = helix_source_timestamp_ns;
+			helix_peak_previous_source_ns = helix_previous_source_ns;
 			helix_peak_output_timestamp = buf_lock_params.outputTimeStamp;
 			helix_peak_bytes = buf_lock_params.bitstreamSizeInBytes;
 			helix_peak_type = buf_lock_params.pictureType;
@@ -735,6 +744,7 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 		}
 		if (buf_lock_params.pictureType == NV_ENC_PIC_TYPE_IDR)
 			U_LOG_I("HELIX_ENCODED_IDR stream=%u frame=%llu bytes=%u", stream_idx, (unsigned long long)frame_index, buf_lock_params.bitstreamSizeInBytes);
+		helix_previous_source_ns = helix_source_timestamp_ns;
 	}
 
 	if (buf_lock_params.pictureType == NV_ENC_PIC_TYPE_NONREF_P)

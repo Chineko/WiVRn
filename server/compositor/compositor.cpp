@@ -316,6 +316,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 
 	auto & view_info = images[i].view_info;
 	images[i].frame_index = frame.rendering.id;
+	images[i].helix_source_timestamp_ns = 0;
 	view_info = {
 	        .display_time = session.get_offset().to_headset(frame.rendering.predicted_display_time_ns),
 	        .alpha = layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND,
@@ -342,6 +343,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	     layer_accum.layers[0].data.type == XRT_LAYER_PROJECTION_DEPTH))
 	{
 		const auto & layer = layer_accum.layers[0];
+		images[i].helix_source_timestamp_ns = layer.data.timestamp;
 		for (int view = 0; view < 2; ++view)
 		{
 			const auto & data = (layer.data.type == XRT_LAYER_PROJECTION ? layer.data.proj.v : layer.data.depth.v)[view];
@@ -644,7 +646,10 @@ void compositor::encoder_work(std::stop_token tok)
 			for (auto & encoder: encoders)
 			{
 				if (encoder->stream_idx < 2 or image.view_info.alpha)
+				{
+					encoder->helix_source_timestamp_ns = image.helix_source_timestamp_ns;
 					encoder->encode(session, image.view_info, image.frame_index);
+				}
 			}
 		}
 		catch (std::exception & e)

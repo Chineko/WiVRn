@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Derived from the local sealed Vulkan stimulus; see encoded workload audit.
 #define XR_USE_GRAPHICS_API_VULKAN
+#define XR_USE_TIMESPEC
 #include <vulkan/vulkan.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -77,14 +78,22 @@ int main(int argc, char ** argv)
 		xr_init(e, XR_TYPE_EXTENSION_PROPERTIES);
 	xr_ok(xrEnumerateInstanceExtensionProperties(nullptr, ext_count, &ext_count, exts.data()), "xrEnumerateInstanceExtensionProperties_values");
 	const char * vulkan_ext = XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME;
+	const char * time_ext = XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME;
 	bool has_vulkan = false;
+	bool has_time = false;
 	for (const auto & e: exts)
+	{
 		if (std::strcmp(e.extensionName, vulkan_ext) == 0)
 			has_vulkan = true;
+		if (std::strcmp(e.extensionName, time_ext) == 0)
+			has_time = true;
+	}
 	std::fprintf(stderr, "HELIX_VULKAN_EXT name=%s supported=%d\n", vulkan_ext, has_vulkan);
 	std::fflush(stderr);
 	if (!has_vulkan)
 		die("XR_KHR_vulkan_enable2_unavailable");
+	if (!has_time)
+		die("XR_KHR_convert_timespec_time_unavailable");
 
 	XrInstanceCreateInfo ici{};
 	xr_init(ici, XR_TYPE_INSTANCE_CREATE_INFO);
@@ -93,8 +102,9 @@ int main(int argc, char ** argv)
 	std::snprintf(ici.applicationInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "%s", "Helix");
 	ici.applicationInfo.engineVersion = 1;
 	ici.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-	ici.enabledExtensionCount = 1;
-	ici.enabledExtensionNames = &vulkan_ext;
+	const char * enabled_exts[] = {vulkan_ext, time_ext};
+	ici.enabledExtensionCount = 2;
+	ici.enabledExtensionNames = enabled_exts;
 	XrInstance instance = XR_NULL_HANDLE;
 	xr_ok(xrCreateInstance(&ici, &instance), "xrCreateInstance");
 
@@ -106,6 +116,8 @@ int main(int argc, char ** argv)
 		fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(raw);
 	};
 	PFN_xrGetVulkanGraphicsRequirements2KHR get_vk_req = nullptr;
+	PFN_xrConvertTimeToTimespecTimeKHR to_timespec = nullptr;
+	load("xrConvertTimeToTimespecTimeKHR", to_timespec);
 	PFN_xrCreateVulkanInstanceKHR create_vk_instance = nullptr;
 	PFN_xrGetVulkanGraphicsDevice2KHR get_vk_phys = nullptr;
 	PFN_xrCreateVulkanDeviceKHR create_vk_device = nullptr;
@@ -388,6 +400,9 @@ int main(int argc, char ** argv)
 		xr_init(p, XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW);
 
 	uint32_t produced = 0;
+	// Plan parser bounds this to 162001 entries; dump only after production.
+	std::vector<int64_t> submitted_times;
+	submitted_times.reserve(target_frames);
 	uint32_t attempts = 0;
 	XrSessionState session_state = XR_SESSION_STATE_READY;
 	const auto production_origin = std::chrono::steady_clock::now();
@@ -528,6 +543,9 @@ int main(int argc, char ** argv)
 		fei.layerCount = 1;
 		fei.layers = layers;
 		xr_ok(xrEndFrame(session, &fei), "xrEndFrame");
+		timespec source_time{};
+		xr_ok(to_timespec(instance, fs.predictedDisplayTime, &source_time), "xrConvertTimeToTimespecTimeKHR");
+		submitted_times.push_back(int64_t(source_time.tv_sec) * 1'000'000'000 + source_time.tv_nsec);
 		++produced;
 		if (produced % 30 == 0)
 		{
@@ -537,6 +555,8 @@ int main(int argc, char ** argv)
 	}
 	if (produced != target_frames)
 		die("renderable_frame_target_not_reached");
+	for (uint32_t index = 0; index < produced; ++index)
+		std::fprintf(stderr, "HELIX_STIMULUS_INPUT index=%u source_ns=%lld level0=%u level1=%u\n", index, (long long)submitted_times[index], std::min(31u, (schedule[index].bytes[0] - 4000u) * 32u / (61440u - 4000u)), std::min(31u, (schedule[index].bytes[1] - 4000u) * 32u / (61440u - 4000u)));
 
 	std::fprintf(stderr, "HELIX_VULKAN_SCHEDULE elapsed_us=%lld expected_us=%lld\n", (long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - production_origin).count(), schedule.back().at);
 	std::fprintf(stderr, "HELIX_VULKAN_DONE frames=%u attempts=%u\n", produced, attempts);

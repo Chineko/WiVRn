@@ -1,0 +1,94 @@
+{
+  "runtime": "PASS",
+  "errors": [],
+  "canaries": {
+    "0": {
+      "frame": "603",
+      "packet_sequence": "13223",
+      "images": [
+        {
+          "stream": "0",
+          "recovered_frame": "603",
+          "image_frame": "603",
+          "exact": "true"
+        }
+      ]
+    },
+    "1": {
+      "frame": "904",
+      "packet_sequence": "19678",
+      "images": [
+        {
+          "stream": "1",
+          "recovered_frame": "904",
+          "image_frame": "904",
+          "exact": "true"
+        }
+      ]
+    }
+  },
+  "traffic_calibration": "PASS",
+  "calibration_errors": [],
+  "observed_pacing": {
+    "1": {
+      "frames": 26962,
+      "bytes_mean": 29561,
+      "bytes_max": 64092,
+      "gap_us": 11126,
+      "gap_max_us": 87586
+    },
+    "0": {
+      "frames": 26965,
+      "bytes_mean": 29623,
+      "bytes_max": 60310,
+      "gap_us": 11125,
+      "gap_max_us": 88249
+    }
+  },
+  "hevc10_recovery": "PASS",
+  "pixel_cleanliness": "NOT_ESTABLISHED",
+  "peak_diagnostics": "PASS",
+  "peak_errors": [],
+  "peaks": {
+    "0": {
+      "encoder": {
+        "stream": "0",
+        "frame": "17590",
+        "output_timestamp": "17590",
+        "bytes": "60310",
+        "picture_type": "0",
+        "avg_qp": "38",
+        "invalidations_applied": "9"
+      },
+      "payload": {
+        "stream": "0",
+        "frame": "17590",
+        "bytes": "60310"
+      }
+    },
+    "1": {
+      "encoder": {
+        "stream": "1",
+        "frame": "26200",
+        "output_timestamp": "26200",
+        "bytes": "64092",
+        "picture_type": "0",
+        "avg_qp": "43",
+        "invalidations_applied": "17"
+      },
+      "payload": {
+        "stream": "1",
+        "frame": "26200",
+        "bytes": "64092"
+      }
+    }
+  },
+  "overall": "PASS",
+  "installed_by_run": false,
+  "rule40": {
+    "direct_evidence": "See retained logs and per-frame reducer evidence",
+    "supported_inference": "No recovery inference is permitted without the exact chain",
+    "remaining_ambiguity": "Pixel contents and VRChat rendering cost are not measured",
+    "decision": "Any failure closes the audit gate; do not retry before full re-audit"
+  }
+}

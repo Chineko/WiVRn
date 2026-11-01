@@ -1,0 +1,30 @@
+{
+  "source_commit": "34f7b98b372d42c1c8f4b6bc17ecd0c0784a609a",
+  "server": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/server/wivrn-server",
+  "apk": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/client.apk",
+  "stimulus": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/stimulus",
+  "runtime_elf": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/runtime/libopenxr_wivrn.so",
+  "manifest": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/openxr_wivrn-dev.json",
+  "artifacts": {
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/calibration-source.log": "f2cc618380004e4a2b0a5724f22dd760a4ea11e36bf0b65b17fc5a1752b95169",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/frames.plan": "c6f9d80b1b7540df4bfda495a6a75f389e97964b3da1bc015dd899479594b41d",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/model.json": "f3b74d42e19e656728b47f3e5cd3d7ff8ddf30eafce40016ce5e17108bb02601",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/model.trace": "a3134cdfbaa735f328478f12d4bc265c1c5a82d7bf7ee1b42545dfa887222524",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/path.plan": "10b3dd8ddccbfd27bed0919e11c5c73f817d44524d43df0bc73b722f3ee2e518",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/production.plan": "7538c619729966be7dc8e08efa124ed1df3db45a717134a5d2e4734d1c60f970",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/plan-seal.json": "ba65aeb15c05d1d350c60bd2fc42a0a3cd086fdbfd2c019fc6821281e07040af",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/ninja-query.txt": "1fbb6f112679c1c21e1ed44b7330d3f52bb3d088b03dd460104649520c45d7ea",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/build-server.log": "7423a7c74a5ed1b0fa746d304f741a2a92c5da9bcf1c6a6ee7b18917b8705034",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/build-stimulus.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/build-apk.log": "8e54c0aaaee17fdc981b413b4b9576c7cfeb6a2df151cdb41a65c38688d130a9",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/build-apk-sandbox-failure.log": "ee54033be70d42112c71cde6ecb15ad002479d6601cd95b792bb69ca003dd575",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/stimulus": "96fc7d461d4d5dd2c952f31feaeb1c587e1a4db4d8d4b043deba9c56d36e8680",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/client.apk": "5d056347651a4402b8edd812ef0575a0a4cc81876be6196e70a3aa0a918f2bf3",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/openxr_wivrn-dev.json": "f6b7b05846a7f80e053e6c984604a7dd5f6cce2a79971f16ec647a1788d14595",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/elf-audit.txt": "9ea6416717fd03f4088fb6e94f29f59a53fcd813c583167f06028987d2d98bec",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/server/wivrn-server": "eaa0a4c56aa6a67d4e5688c4c604950e947a6c8c8231c9a5a71bf442a9531d85",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/runtime/libopenxr_wivrn.so": "3df8fd18f22eae33e4eedd4be6c06826e395d550e648bf2ee28d00ed360320f8",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-peak-diagnostic/runtime/libmonado_wivrn.so": "0d4e7e1bdaba3ed19e7e71979f24a0e2b43a906d3940e226ec9229571c96cead",
+    "/home/chineko/.codex/worktrees/hevc10-peak-diagnosis/WiVRn/tools/helix-vrchat-encoded.py": "ea1afa8d36f0b20b0bc56d449dfb809b7f233af18742d5f63ae2b0f6a0aaaddb"
+  }
+}

@@ -1,0 +1,19 @@
+ WARN [SendData] HELIX_HEVC10_DROP stream=0 ordinal=600 frame=604 shard=0 packet_sequence=13230 cached=1
+HELIX_HEVC10_RTX_SENT stream=0 frame=604 packet_sequence=13230 actual_send=1
+ WARN [SendData] HELIX_HEVC10_DROP stream=1 ordinal=900 frame=905 shard=0 packet_sequence=19682 cached=1
+HELIX_HEVC10_RTX_SENT stream=1 frame=905 packet_sequence=19682 actual_send=1
+HELIX_HEVC10_RTX_SENT stream=1 frame=26096 packet_sequence=568146 actual_send=1
+ INFO [~video_encoder_nvenc] HELIX_ENCODED_PEAK stream=1 frame=24678 output_timestamp=24678 bytes=78379 picture_type=0 avg_qp=39 invalidations_applied=16
+ INFO [helix_log_pacing_summary] HELIX_PAYLOAD_PEAK stream=1 frame=24678 bytes=78379
+ INFO [~video_encoder_nvenc] HELIX_ENCODED_PEAK stream=0 frame=25505 output_timestamp=25505 bytes=65994 picture_type=0 avg_qp=44 invalidations_applied=14
+ INFO [helix_log_pacing_summary] HELIX_PAYLOAD_PEAK stream=0 frame=25505 bytes=65994
+         1793537171.950 21050 21170 I WiVRn   : [2026-11-01 13:46:11.950] [WiVRn] [info] HELIX_HEVC10_RTX_RECEIVED stream=0 frame=604 packet_sequence=13230 shard=0
+         1793537171.950 21050 21170 I WiVRn   : [2026-11-01 13:46:11.950] [WiVRn] [info] HELIX_HEVC10_RTX_ASSEMBLED stream=0 frame=604
+         1793537171.956 21050 21195 I WiVRn   : [2026-11-01 13:46:11.956] [WiVRn] [info] HELIX_HEVC10_RTX_MEDIA_OUTPUT stream=0 frame=604 exact_recovered_frame=1
+         1793537171.956 21050 21194 I WiVRn   : [2026-11-01 13:46:11.956] [WiVRn] [info] HELIX_HEVC10_IMAGE_AFTER_RTX stream=0 recovered_frame=604 image_frame=604 exact=true
+         1793537175.297 21050 21170 I WiVRn   : [2026-11-01 13:46:15.297] [WiVRn] [info] HELIX_HEVC10_RTX_RECEIVED stream=1 frame=905 packet_sequence=19682 shard=0
+         1793537175.297 21050 21170 I WiVRn   : [2026-11-01 13:46:15.297] [WiVRn] [info] HELIX_HEVC10_RTX_ASSEMBLED stream=1 frame=905
+         1793537175.301 21050 21203 I WiVRn   : [2026-11-01 13:46:15.301] [WiVRn] [info] HELIX_HEVC10_RTX_MEDIA_OUTPUT stream=1 frame=905 exact_recovered_frame=1
+         1793537175.301 21050 21202 I WiVRn   : [2026-11-01 13:46:15.301] [WiVRn] [info] HELIX_HEVC10_IMAGE_AFTER_RTX stream=1 recovered_frame=905 image_frame=905 exact=true
+         1793537465.672 21050 21125 I WiVRn   : [2026-11-01 13:51:05.672] [WiVRn] [info] HELIX_HEVC10_PROBE_SUMMARY stream=1 rtx_assembled=1 media_exact=1 image_after=1 overflow=0 pending_media=0 pending_image=0
+         1793537465.685 21050 21125 I WiVRn   : [2026-11-01 13:51:05.685] [WiVRn] [info] HELIX_HEVC10_PROBE_SUMMARY stream=0 rtx_assembled=1 media_exact=1 image_after=1 overflow=0 pending_media=0 pending_image=0

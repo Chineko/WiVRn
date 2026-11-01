@@ -1,0 +1,126 @@
+{
+  "runtime": "PASS",
+  "errors": [],
+  "canaries": {
+    "0": {
+      "frame": "601",
+      "packet_sequence": "13124",
+      "images": [
+        {
+          "stream": "0",
+          "recovered_frame": "601",
+          "image_frame": "601",
+          "exact": "true"
+        }
+      ]
+    },
+    "1": {
+      "frame": "901",
+      "packet_sequence": "19195",
+      "images": [
+        {
+          "stream": "1",
+          "recovered_frame": "901",
+          "image_frame": "901",
+          "exact": "true"
+        }
+      ]
+    }
+  },
+  "traffic_calibration": "PASS",
+  "calibration_errors": [],
+  "observed_pacing": {
+    "1": {
+      "frames": 26973,
+      "bytes_mean": 28661,
+      "bytes_max": 67620,
+      "gap_us": 11125,
+      "gap_max_us": 80216
+    },
+    "0": {
+      "frames": 26973,
+      "bytes_mean": 28845,
+      "bytes_max": 58492,
+      "gap_us": 11125,
+      "gap_max_us": 80139
+    }
+  },
+  "hevc10_recovery": "PASS",
+  "pixel_cleanliness": "NOT_ESTABLISHED",
+  "peak_diagnostics": "PASS",
+  "peak_errors": [],
+  "peaks": {
+    "0": {
+      "encoder": {
+        "stream": "0",
+        "frame": "2167",
+        "output_timestamp": "2167",
+        "bytes": "58492",
+        "picture_type": "0",
+        "avg_qp": "20",
+        "invalidations_applied": "0"
+      },
+      "payload": {
+        "stream": "0",
+        "frame": "2167",
+        "bytes": "58492"
+      }
+    },
+    "1": {
+      "encoder": {
+        "stream": "1",
+        "frame": "14154",
+        "output_timestamp": "14154",
+        "bytes": "67620",
+        "picture_type": "0",
+        "avg_qp": "25",
+        "invalidations_applied": "6"
+      },
+      "payload": {
+        "stream": "1",
+        "frame": "14154",
+        "bytes": "67620"
+      }
+    }
+  },
+  "source_correlation": "PASS",
+  "source_errors": [],
+  "peak_sources": {
+    "0": {
+      "current": {
+        "index": "2162",
+        "source_ns": "1947752803484",
+        "level0": "11",
+        "level1": "16"
+      },
+      "previous_encoded_input": {
+        "index": "2161",
+        "source_ns": "1947741692373",
+        "level0": "12",
+        "level1": "17"
+      }
+    },
+    "1": {
+      "current": {
+        "index": "14116",
+        "source_ns": "2080935919712",
+        "level0": "14",
+        "level1": "15"
+      },
+      "previous_encoded_input": {
+        "index": "14115",
+        "source_ns": "2080924808601",
+        "level0": "15",
+        "level1": "12"
+      }
+    }
+  },
+  "overall": "PASS",
+  "installed_by_run": true,
+  "rule40": {
+    "direct_evidence": "See retained logs and per-frame reducer evidence",
+    "supported_inference": "No recovery inference is permitted without the exact chain",
+    "remaining_ambiguity": "Pixel contents and VRChat rendering cost are not measured",
+    "decision": "Any failure closes the audit gate; do not retry before full re-audit"
+  }
+}

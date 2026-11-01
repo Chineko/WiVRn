@@ -1,0 +1,29 @@
+{
+  "source_commit": "f87cbf84acea3e52370a7c15d4ed63a2d870ce87",
+  "server": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/server/wivrn-server",
+  "apk": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/client.apk",
+  "stimulus": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/stimulus",
+  "runtime_elf": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/runtime/libopenxr_wivrn.so",
+  "manifest": "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/openxr_wivrn-dev.json",
+  "artifacts": {
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/calibration-source.log": "f2cc618380004e4a2b0a5724f22dd760a4ea11e36bf0b65b17fc5a1752b95169",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/frames.plan": "c6f9d80b1b7540df4bfda495a6a75f389e97964b3da1bc015dd899479594b41d",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/model.json": "f3b74d42e19e656728b47f3e5cd3d7ff8ddf30eafce40016ce5e17108bb02601",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/model.trace": "a3134cdfbaa735f328478f12d4bc265c1c5a82d7bf7ee1b42545dfa887222524",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/path.plan": "10b3dd8ddccbfd27bed0919e11c5c73f817d44524d43df0bc73b722f3ee2e518",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/production.plan": "7538c619729966be7dc8e08efa124ed1df3db45a717134a5d2e4734d1c60f970",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/plan-seal.json": "ba65aeb15c05d1d350c60bd2fc42a0a3cd086fdbfd2c019fc6821281e07040af",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/ninja-query.txt": "1fbb6f112679c1c21e1ed44b7330d3f52bb3d088b03dd460104649520c45d7ea",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/build-server.log": "e41227002b7f39dde55cba85a474516c34eacdfbd5fa28315c158a505f4eddc4",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/build-stimulus.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/stimulus": "97c43d66704c216ff05021f8f21b7636bb88414e148d4bc890185dd41c349911",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/build-apk.log": "9c7585c1686d3d7bb616e14d665e5c6b7155a1d75a1990217059d6970fcd84d3",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/client.apk": "1bc6894040c2d4c81f0dbaef9792abf5cb9f26cefee585e491092d1eaf2fc8f2",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/openxr_wivrn-dev.json": "3139463cc79afca1c73187da848e366725e9aefe0ee87474454a442439465b8d",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/elf-audit.txt": "9ea6416717fd03f4088fb6e94f29f59a53fcd813c583167f06028987d2d98bec",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/server/wivrn-server": "b45b5128b1b426efcac9a8ce546168800634693ff2315e2860bd4e398f3d1d82",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/runtime/libopenxr_wivrn.so": "7dcc860b11730818da03e3f7e817685a6674d9ce384b54a50b8c9946531c24ed",
+    "/home/chineko/Documents/Codex/2026-10-31/work-locally-in-home-chineko-wivrn/outputs/encoded-workload-stimulus-v2/runtime/libmonado_wivrn.so": "de9ac0cf45920bcbae06534f84822de2093771ed914d7327d0ff7f0a0744d1fe",
+    "/home/chineko/.codex/worktrees/hevc10-peak-diagnosis/WiVRn/tools/helix-vrchat-encoded.py": "98498d8cdb5ac7da249d8c73a6585efb76c69ae1093dab113970b009bc58d98f"
+  }
+}

@@ -19,7 +19,7 @@ once(
     "next_case width",
 )
 
-anchor = '''bool helix_encoded_torture_enabled()
+anchor = """bool helix_encoded_torture_enabled()
 {
 \tstatic const bool enabled = [] {
 \t\tconst char * value = std::getenv("HELIX_ENCODED_TORTURE");
@@ -27,8 +27,10 @@ anchor = '''bool helix_encoded_torture_enabled()
 \t}();
 \treturn enabled;
 }
-'''
-addition = anchor + '''
+"""
+addition = (
+    anchor
+    + """
 uint32_t helix_encoded_torture_cycles()
 {
 \tstatic const uint32_t cycles = [] {
@@ -58,7 +60,8 @@ uint64_t helix_encoded_torture_spacing_frames()
 \t}();
 \treturn spacing;
 }
-'''
+"""
+)
 once(anchor, addition, "torture config helpers")
 
 once(
@@ -80,24 +83,24 @@ once(
 )
 
 required = [
-    'HELIX_ENCODED_TORTURE_CYCLES',
-    'HELIX_ENCODED_TORTURE_SPACING_FRAMES',
-    '[]() -> uint64_t',
-    'next_case < helix_encoded_torture_cycles() * 3u',
-    'helix_encoded_torture.last_injected_frame + helix_encoded_torture_spacing_frames()',
-    'switch (helix_encoded_torture.next_case % 3u)',
-    'candidate == helix_encoded_case::rtx8 ? 8 : candidate == helix_encoded_case::gap9 ? 9',
-    'record.recovery_frame <= record.frame || record.recovery_frame - record.frame > 3',
+    "HELIX_ENCODED_TORTURE_CYCLES",
+    "HELIX_ENCODED_TORTURE_SPACING_FRAMES",
+    "[]() -> uint64_t",
+    "next_case < helix_encoded_torture_cycles() * 3u",
+    "helix_encoded_torture.last_injected_frame + helix_encoded_torture_spacing_frames()",
+    "switch (helix_encoded_torture.next_case % 3u)",
+    "candidate == helix_encoded_case::rtx8 ? 8 : candidate == helix_encoded_case::gap9 ? 9",
+    "record.recovery_frame <= record.frame || record.recovery_frame - record.frame > 3",
 ]
 for item in required:
     if item not in s:
         raise SystemExit(f"FAIL: sustained requirement missing: {item}")
 
 for forbidden in [
-    'next_case < 3)',
-    'last_injected_frame + 20;',
-    'switch (helix_encoded_torture.next_case)\\n',
-    'return 20ull;',
+    "next_case < 3)",
+    "last_injected_frame + 20;",
+    "switch (helix_encoded_torture.next_case)\\n",
+    "return 20ull;",
 ]:
     if forbidden in s:
         raise SystemExit(f"FAIL: stale sustained anchor remains: {forbidden}")

@@ -18,8 +18,8 @@
  */
 
 #include "android_decoder.h"
-#include "application.h"
 #include "../helix_diagnostics.h"
+#include "application.h"
 #include "scenes/stream.h"
 #include "utils/named_thread.h"
 #include "version.h"
@@ -271,15 +271,57 @@ void helix_remove_health(wivrn::android::decoder * decoder, uint8_t stream_index
 	        state->release_to_image_max_us,
 	        image_processing_average_us,
 	        state->image_processing_max_us,
-	        state->latency_hist[0], state->latency_hist[1], state->latency_hist[2], state->latency_hist[3], state->latency_hist[4], state->latency_hist[5],
-	        state->submit_to_media_hist[0], state->submit_to_media_hist[1], state->submit_to_media_hist[2], state->submit_to_media_hist[3], state->submit_to_media_hist[4], state->submit_to_media_hist[5],
-	        state->media_output_gap_hist[0], state->media_output_gap_hist[1], state->media_output_gap_hist[2], state->media_output_gap_hist[3], state->media_output_gap_hist[4], state->media_output_gap_hist[5],
-	        state->complete_interval_hist[0], state->complete_interval_hist[1], state->complete_interval_hist[2], state->complete_interval_hist[3], state->complete_interval_hist[4], state->complete_interval_hist[5],
-	        state->release_to_image_hist[0], state->release_to_image_hist[1], state->release_to_image_hist[2], state->release_to_image_hist[3], state->release_to_image_hist[4], state->release_to_image_hist[5],
-	        state->image_processing_hist[0], state->image_processing_hist[1], state->image_processing_hist[2], state->image_processing_hist[3], state->image_processing_hist[4], state->image_processing_hist[5],
-	        network.completed_frames, network.incomplete_frames, network.zero_shard_frames, network.missing_shards, network.old_shards, network.frame_jump_events, network.skipped_frames,
-	        network.last_assembly_us, network.max_assembly_us,
-	        network.assembly_hist[0], network.assembly_hist[1], network.assembly_hist[2], network.assembly_hist[3], network.assembly_hist[4], network.assembly_hist[5]);
+	        state->latency_hist[0],
+	        state->latency_hist[1],
+	        state->latency_hist[2],
+	        state->latency_hist[3],
+	        state->latency_hist[4],
+	        state->latency_hist[5],
+	        state->submit_to_media_hist[0],
+	        state->submit_to_media_hist[1],
+	        state->submit_to_media_hist[2],
+	        state->submit_to_media_hist[3],
+	        state->submit_to_media_hist[4],
+	        state->submit_to_media_hist[5],
+	        state->media_output_gap_hist[0],
+	        state->media_output_gap_hist[1],
+	        state->media_output_gap_hist[2],
+	        state->media_output_gap_hist[3],
+	        state->media_output_gap_hist[4],
+	        state->media_output_gap_hist[5],
+	        state->complete_interval_hist[0],
+	        state->complete_interval_hist[1],
+	        state->complete_interval_hist[2],
+	        state->complete_interval_hist[3],
+	        state->complete_interval_hist[4],
+	        state->complete_interval_hist[5],
+	        state->release_to_image_hist[0],
+	        state->release_to_image_hist[1],
+	        state->release_to_image_hist[2],
+	        state->release_to_image_hist[3],
+	        state->release_to_image_hist[4],
+	        state->release_to_image_hist[5],
+	        state->image_processing_hist[0],
+	        state->image_processing_hist[1],
+	        state->image_processing_hist[2],
+	        state->image_processing_hist[3],
+	        state->image_processing_hist[4],
+	        state->image_processing_hist[5],
+	        network.completed_frames,
+	        network.incomplete_frames,
+	        network.zero_shard_frames,
+	        network.missing_shards,
+	        network.old_shards,
+	        network.frame_jump_events,
+	        network.skipped_frames,
+	        network.last_assembly_us,
+	        network.max_assembly_us,
+	        network.assembly_hist[0],
+	        network.assembly_hist[1],
+	        network.assembly_hist[2],
+	        network.assembly_hist[3],
+	        network.assembly_hist[4],
+	        network.assembly_hist[5]);
 }
 
 void helix_note_failure(wivrn::android::decoder * decoder, helix_decoder_failure failure)
@@ -449,7 +491,10 @@ void helix_request_recovery(
 			state->recovery_requests_suppressed++;
 			spdlog::info(
 			        "Helix diagnostic recovery action stream={} frame={} action=idr_suppressed complete_submissions_since_request={} reason={}",
-			        stream_index, frame_index, state->complete_submissions_since_recovery_request, reason);
+			        stream_index,
+			        frame_index,
+			        state->complete_submissions_since_recovery_request,
+			        reason);
 			return;
 		}
 
@@ -474,13 +519,17 @@ void helix_request_recovery(
 				state->recovery_started_at = helix_clock::now();
 		}
 		spdlog::info("Helix diagnostic recovery action stream={} frame={} action=idr_sent reason={}",
-		             stream_index, recovery_feedback->frame_index, reason);
+		             stream_index,
+		             recovery_feedback->frame_index,
+		             reason);
 		scene->send_feedback(*recovery_feedback);
 	}
 	else
 	{
 		spdlog::warn("Helix diagnostic recovery action stream={} frame={} action=idr_not_sent_scene_unavailable reason={}",
-		             stream_index, recovery_feedback->frame_index, reason);
+		             stream_index,
+		             recovery_feedback->frame_index,
+		             reason);
 	}
 }
 
@@ -626,8 +675,7 @@ void helix_note_submitted(
 				new_candidate = true;
 			}
 
-			recovery_qualified = oldest_pending_us >= helix_watchdog_age_threshold_us
-			                     && since_media_output_us >= helix_watchdog_age_threshold_us;
+			recovery_qualified = oldest_pending_us >= helix_watchdog_age_threshold_us && since_media_output_us >= helix_watchdog_age_threshold_us;
 			if (recovery_qualified && !state->stall_active)
 			{
 				state->stall_active = true;
@@ -650,18 +698,44 @@ void helix_note_submitted(
 		{
 			spdlog::warn(
 			        "Helix decoder output stall qualified on stream {} with {} complete frames pending, oldest {} us (frame index gap {})",
-			        stream_index, complete_frames_without_output, oldest_pending_us, frame_index_gap);
+			        stream_index,
+			        complete_frames_without_output,
+			        oldest_pending_us,
+			        frame_index_gap);
 		}
 		spdlog::warn(
 		        "Helix diagnostic incident stream={} frame={} action={} pending={} oldest_pending={}us newest_pending={}us burst(5/10/20ms)={}/{}/{} since_media_output={}us since_image={}us complete_interval(last/max)={}/{}us threshold={}us peer_stall_age={}us peer_within(5/10/20/50ms)={}/{}/{}/{} network(complete/incomplete/zero/missing/old/jumps/skipped)={}/{}/{}/{}/{}/{}/{} assembly(last/max)={}/{}us network_age(incomplete/old/jump)={}/{}/{}us",
-		        stream_index, feedback.frame_index, action, complete_frames_without_output, oldest_pending_us, newest_pending_us,
-		        burst_5ms, burst_10ms, burst_20ms, since_media_output_us, since_image_us,
-		        complete_interval_last_us, complete_interval_max_us, helix_watchdog_age_threshold_us, peer.peer_age_us,
-		        peer.within_5ms, peer.within_10ms, peer.within_20ms, peer.within_50ms,
-		        network.completed_frames, network.incomplete_frames, network.zero_shard_frames, network.missing_shards,
-		        network.old_shards, network.frame_jump_events, network.skipped_frames,
-		        network.last_assembly_us, network.max_assembly_us,
-		        network.since_incomplete_us, network.since_old_shard_us, network.since_frame_jump_us);
+		        stream_index,
+		        feedback.frame_index,
+		        action,
+		        complete_frames_without_output,
+		        oldest_pending_us,
+		        newest_pending_us,
+		        burst_5ms,
+		        burst_10ms,
+		        burst_20ms,
+		        since_media_output_us,
+		        since_image_us,
+		        complete_interval_last_us,
+		        complete_interval_max_us,
+		        helix_watchdog_age_threshold_us,
+		        peer.peer_age_us,
+		        peer.within_5ms,
+		        peer.within_10ms,
+		        peer.within_20ms,
+		        peer.within_50ms,
+		        network.completed_frames,
+		        network.incomplete_frames,
+		        network.zero_shard_frames,
+		        network.missing_shards,
+		        network.old_shards,
+		        network.frame_jump_events,
+		        network.skipped_frames,
+		        network.last_assembly_us,
+		        network.max_assembly_us,
+		        network.since_incomplete_us,
+		        network.since_old_shard_us,
+		        network.since_frame_jump_us);
 	}
 	if (recovery_qualified)
 		helix_request_recovery(decoder, weak_scene, stream_index, "decoder output stalled beyond time threshold", feedback.frame_index);
@@ -686,8 +760,13 @@ decoder::decoder(
 	auto width = description.width;
 	auto height = description.height / (stream_index == 2 ? 2 : 1);
 	spdlog::info("Helix diagnostics {} commit={} stream={} codec={} size={}x{} target_fps={}",
-	             helix_diagnostics_version, wivrn::git_commit, stream_index,
-	             mime(description.codec[stream_index]), width, height, description.frame_rate);
+	             helix_diagnostics_version,
+	             wivrn::git_commit,
+	             stream_index,
+	             mime(description.codec[stream_index]),
+	             width,
+	             height,
+	             description.frame_rate);
 
 	AImageReader * ir;
 	check(AImageReader_newWithUsage(
@@ -936,7 +1015,10 @@ void decoder::on_image_available(AImageReader * reader)
 		if (auto recovered = wivrn::helix_diag::hevc10_note_image(stream_index, frame_index))
 		{
 			spdlog::info("HELIX_HEVC10_IMAGE_AFTER_RTX stream={} recovered_frame={} image_frame={} exact={}",
-			             stream_index, *recovered, frame_index, frame_index == *recovered);
+			             stream_index,
+			             *recovered,
+			             frame_index,
+			             frame_index == *recovered);
 		}
 
 		auto vk_data = map_hardware_buffer(image.get());

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-from pathlib import Path
+import logging
 import subprocess
 import sys
+from pathlib import Path
 
 EXPECTED = {
     "server/main.cpp": "af2f457d5c7399430105e39ad5175cfd6d8bf8c0",
@@ -58,8 +59,8 @@ def main() -> int:
         path,
     )
 
-    old_success = '''\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tdelay_next_try = default_delay_next_try;\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;'''
-    new_success = '''\tdelay_next_try = default_delay_next_try;\n\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tstd::cerr << "Helix synthetic transport mode: starting bounded receiver battery" << std::endl;\n\t\thelix_synthetic_thread.emplace([](std::stop_token stop_token) {\n\t\t\tint result = 1;\n\t\t\ttry\n\t\t\t{\n\t\t\t\tresult = wivrn::helix_synthetic_transport::run(*connection, stop_token);\n\t\t\t}\n\t\t\tcatch (const std::exception & e)\n\t\t\t{\n\t\t\t\tstd::cerr << "Helix synthetic transport failed: " << e.what() << std::endl;\n\t\t\t}\n\n\t\t\thelix_synthetic_result.store(result, std::memory_order_release);\n\t\t\tg_main_context_invoke(nullptr, [](void *) -> gboolean {\n\t\t\t\tconst int result = helix_synthetic_result.load(std::memory_order_acquire);\n\t\t\t\tstd::cerr << "HELIX_SYNTHETIC_TRANSPORT_EXIT result=" << result << std::endl;\n\t\t\t\tquitting_main_loop = true;\n\t\t\t\tg_main_loop_quit(main_loop);\n\t\t\t\treturn G_SOURCE_REMOVE;\n\t\t\t}, nullptr);\n\t\t});\n\t\treturn G_SOURCE_REMOVE;\n\t}\n\n\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;'''
+    old_success = """\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tdelay_next_try = default_delay_next_try;\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;"""
+    new_success = """\tdelay_next_try = default_delay_next_try;\n\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tstd::cerr << "Helix synthetic transport mode: starting bounded receiver battery" << std::endl;\n\t\thelix_synthetic_thread.emplace([](std::stop_token stop_token) {\n\t\t\tint result = 1;\n\t\t\ttry\n\t\t\t{\n\t\t\t\tresult = wivrn::helix_synthetic_transport::run(*connection, stop_token);\n\t\t\t}\n\t\t\tcatch (const std::exception & e)\n\t\t\t{\n\t\t\t\tstd::cerr << "Helix synthetic transport failed: " << e.what() << std::endl;\n\t\t\t}\n\n\t\t\thelix_synthetic_result.store(result, std::memory_order_release);\n\t\t\tg_main_context_invoke(nullptr, [](void *) -> gboolean {\n\t\t\t\tconst int result = helix_synthetic_result.load(std::memory_order_acquire);\n\t\t\t\tstd::cerr << "HELIX_SYNTHETIC_TRANSPORT_EXIT result=" << result << std::endl;\n\t\t\t\tquitting_main_loop = true;\n\t\t\t\tg_main_loop_quit(main_loop);\n\t\t\t\treturn G_SOURCE_REMOVE;\n\t\t\t}, nullptr);\n\t\t});\n\t\treturn G_SOURCE_REMOVE;\n\t}\n\n\tconfiguration c;\n\tstart_server(c);\n\ttry\n\t{\n\t\tchildren->start_application(c.application);\n\t}\n\tcatch (std::exception & e)\n\t{\n\t\tstd::cerr << "Failed to start application: " << e.what() << std::endl;\n\t}\n\n\tconnection.reset();\n\treturn G_SOURCE_REMOVE;"""
     updated[path] = replace_once(updated[path], old_success, new_success, path)
 
     updated[path] = replace_once(
@@ -71,7 +72,7 @@ def main() -> int:
     updated[path] = replace_once(
         updated[path],
         "\tdo_fork = not *no_fork;\n\tif (*no_encrypt)",
-        "\tdo_fork = not *no_fork;\n\thelix_synthetic_transport_enabled = bool(*helix_synthetic_transport);\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tif (*early_active_runtime)\n\t\t{\n\t\t\tstd::cerr << \"--helix-synthetic-transport is incompatible with --early-active-runtime\" << std::endl;\n\t\t\treturn 2;\n\t\t}\n\t\tdo_active_runtime = false;\n\t\tdo_fork = false;\n\t}\n\tif (*no_encrypt)",
+        '\tdo_fork = not *no_fork;\n\thelix_synthetic_transport_enabled = bool(*helix_synthetic_transport);\n\tif (helix_synthetic_transport_enabled)\n\t{\n\t\tif (*early_active_runtime)\n\t\t{\n\t\t\tstd::cerr << "--helix-synthetic-transport is incompatible with --early-active-runtime" << std::endl;\n\t\t\treturn 2;\n\t\t}\n\t\tdo_active_runtime = false;\n\t\tdo_fork = false;\n\t}\n\tif (*no_encrypt)',
         path,
     )
     updated[path] = replace_once(
@@ -90,8 +91,8 @@ def main() -> int:
     path = "server/helix_synthetic_transport.cpp"
     updated[path] = replace_once(
         updated[path],
-        '''\t// Warm-up establishes independent receiver packet-sequence state for both color streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\tif (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))\n\t\t\t++s.catastrophic;\n\t\tframe[stream] += 2;\n\t}\n\n\tfor (const auto & event: recorded_events)''',
-        '''\t// Warm-up establishes independent receiver packet-sequence state for both color streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\tif (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))\n\t\t\t++s.catastrophic;\n\t\tframe[stream] += 2;\n\t}\n\n\t// Dominant historical failure class: the entire encoded frame disappears before\n\t// Quest wlan0. Exercise a literal 64/64-shard erasure on both production streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\trun_case(tx, connection, s, stream, frame[stream], shards_per_frame, 0, false);\n\t\tframe[stream] += 2;\n\t}\n\n\tfor (const auto & event: recorded_events)''',
+        """\t// Warm-up establishes independent receiver packet-sequence state for both color streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\tif (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))\n\t\t\t++s.catastrophic;\n\t\tframe[stream] += 2;\n\t}\n\n\tfor (const auto & event: recorded_events)""",
+        """\t// Warm-up establishes independent receiver packet-sequence state for both color streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\tif (!run_case(tx, connection, s, stream, frame[stream], 0, 0, false))\n\t\t\t++s.catastrophic;\n\t\tframe[stream] += 2;\n\t}\n\n\t// Dominant historical failure class: the entire encoded frame disappears before\n\t// Quest wlan0. Exercise a literal 64/64-shard erasure on both production streams.\n\tfor (uint8_t stream = 0; stream < 2; ++stream)\n\t{\n\t\trun_case(tx, connection, s, stream, frame[stream], shards_per_frame, 0, false);\n\t\tframe[stream] += 2;\n\t}\n\n\tfor (const auto & event: recorded_events)""",
         path,
     )
 
@@ -100,7 +101,11 @@ def main() -> int:
 
     try:
         subprocess.run(["git", "diff", "--check", "--", *EXPECTED.keys()], check=True)
-        changed = set(subprocess.check_output(["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True).splitlines())
+        changed = set(
+            subprocess.check_output(
+                ["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True
+            ).splitlines()
+        )
         if changed != set(EXPECTED):
             raise RuntimeError(f"unexpected changed paths: {sorted(changed)}")
         markers = {
@@ -124,6 +129,7 @@ def main() -> int:
                 if marker not in updated[marker_path]:
                     raise RuntimeError(f"required marker missing from {marker_path}: {marker}")
     except Exception:
+        logging.getLogger(__name__).exception("Operation failed")
         for path, text in originals.items():
             Path(path).write_text(text)
         raise
@@ -136,5 +142,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        logging.getLogger(__name__).exception("Operation failed")
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2)

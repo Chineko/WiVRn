@@ -289,7 +289,8 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 			return XRT_SUCCESS;
 		}
 		if (decision.idrs)
-			for (size_t eye = 0; eye < 2; ++eye) encoders[eye]->reset();
+			for (size_t eye = 0; eye < 2; ++eye)
+				encoders[eye]->reset();
 	}
 
 	U_LOG_IFL_D(log_level, "frame %ld commit %d layers", frame.rendering.id, layer_accum.layer_count);

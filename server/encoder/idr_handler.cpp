@@ -52,8 +52,8 @@ void default_idr_handler::on_feedback(const from_headset::feedback & f)
 		                   {
 			                   U_LOG_I("IDR frame needed on stream %d", f.stream_index);
 			                   U_LOG_D("frame_idx: %ld, last_ack = %ld",
-					           f.frame_index,
-					           r.last_ack);
+			                           f.frame_index,
+			                           r.last_ack);
 			                   state = need_idr{};
 		                   }
 		                   else if (f.received_from_decoder)
@@ -140,9 +140,9 @@ default_idr_handler::frame_type default_idr_handler::get_type(uint64_t frame_ind
 		                          if (frame_index < s.idr_id)
 		                          {
 			                          U_LOG_I("IDR frame retargeted on stream %d from %llu to in-flight frame %llu",
-						          stream_idx,
-						          static_cast<unsigned long long>(s.idr_id),
-						          static_cast<unsigned long long>(frame_index));
+			                                  stream_idx,
+			                                  static_cast<unsigned long long>(s.idr_id),
+			                                  static_cast<unsigned long long>(frame_index));
 			                          s.idr_id = frame_index;
 			                          return frame_type::i;
 		                          }

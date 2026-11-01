@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-from pathlib import Path
+import logging
 import subprocess
 import sys
+from pathlib import Path
 
 EXPECTED = {
     "server/encoder/idr_handler.h": "54f6b488710a66d1765c7bc9cf4fc3c486ca8e72",
@@ -68,7 +69,7 @@ def main() -> int:
     )
 
     path = "server/encoder/video_encoder_nvenc.cpp"
-    old_feedback = '''void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
+    old_feedback = """void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
 {
 \tauto & idr_handler = static_cast<default_idr_handler &>(*idr);
 \tif (!feedback.sent_to_decoder && helix_ref_invalidation_supported)
@@ -144,8 +145,8 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 \t\t}
 \t}
 }
-'''
-    new_feedback = '''void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
+"""
+    new_feedback = """void video_encoder_nvenc::on_feedback(const from_headset::feedback & feedback)
 {
 \tauto & idr_handler = static_cast<default_idr_handler &>(*idr);
 \tif (!feedback.sent_to_decoder && helix_ref_invalidation_supported)
@@ -230,7 +231,7 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
 \t\t}
 \t}
 }
-'''
+"""
     updated[path] = replace_once(updated[path], old_feedback, new_feedback, path)
     updated[path] = replace_once(
         updated[path],
@@ -240,26 +241,26 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
     )
     updated[path] = replace_once(
         updated[path],
-        'static_cast<unsigned long long>(helix_invalidation_errors.load(std::memory_order_relaxed)),\n\t        pending_invalidations);',
-        'static_cast<unsigned long long>(helix_invalidation_errors.load(std::memory_order_relaxed)),\n\t        static_cast<unsigned long long>(helix_invalidation_fallback_idr.load(std::memory_order_relaxed)),\n\t        pending_invalidations);',
+        "static_cast<unsigned long long>(helix_invalidation_errors.load(std::memory_order_relaxed)),\n\t        pending_invalidations);",
+        "static_cast<unsigned long long>(helix_invalidation_errors.load(std::memory_order_relaxed)),\n\t        static_cast<unsigned long long>(helix_invalidation_fallback_idr.load(std::memory_order_relaxed)),\n\t        pending_invalidations);",
         path,
     )
     updated[path] = replace_once(
         updated[path],
-        '\t\t\tidr_handler.reset();\n\t\t\thelix_clear_reference_invalidations();',
-        '\t\t\t{\n\t\t\t\tstd::scoped_lock lock(helix_invalidation_mutex);\n\t\t\t\thelix_pending_invalidations.clear();\n\t\t\t\tidr_handler.reset();\n\t\t\t}',
+        "\t\t\tidr_handler.reset();\n\t\t\thelix_clear_reference_invalidations();",
+        "\t\t\t{\n\t\t\t\tstd::scoped_lock lock(helix_invalidation_mutex);\n\t\t\t\thelix_pending_invalidations.clear();\n\t\t\t\tidr_handler.reset();\n\t\t\t}",
         path,
     )
     updated[path] = replace_once(
         updated[path],
-        '\tauto frame_type = idr_handler.get_type(frame_index, stream_idx);',
-        '\thelix_drain_reference_invalidations();\n\tauto frame_type = idr_handler.get_type(frame_index, stream_idx);',
+        "\tauto frame_type = idr_handler.get_type(frame_index, stream_idx);",
+        "\thelix_drain_reference_invalidations();\n\tauto frame_type = idr_handler.get_type(frame_index, stream_idx);",
         path,
     )
     updated[path] = replace_once(
         updated[path],
-        '\t\thelix_drain_reference_invalidations();\n\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));',
-        '\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));',
+        "\t\thelix_drain_reference_invalidations();\n\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));",
+        "\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));",
         path,
     )
 
@@ -267,10 +268,15 @@ void video_encoder_nvenc::helix_drain_reference_invalidations()
         for path in EXPECTED:
             Path(path).write_text(updated[path])
         subprocess.run(["git", "diff", "--check", "--", *EXPECTED.keys()], check=True)
-        changed = set(subprocess.check_output(["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True).splitlines())
+        changed = set(
+            subprocess.check_output(
+                ["git", "diff", "--name-only", "--", *EXPECTED.keys()], text=True
+            ).splitlines()
+        )
         if changed != set(EXPECTED):
             raise RuntimeError(f"unexpected changed path set: {sorted(changed)}")
     except Exception:
+        logging.getLogger(__name__).exception("Operation failed")
         for path, text in originals.items():
             Path(path).write_text(text)
         raise
@@ -283,5 +289,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        logging.getLogger(__name__).exception("Operation failed")
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2)

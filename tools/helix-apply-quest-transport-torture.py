@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-from pathlib import Path
+import logging
 import subprocess
 import sys
+from pathlib import Path
 
 PATH = "server/helix_synthetic_transport.cpp"
 EXPECTED_BLOB = "ce1294eb26d6fbef01d13cebe0345d8ac22be6d3"
@@ -49,7 +50,7 @@ def main() -> int:
         "\tvoid send_explicit_shard(uint8_t stream, uint64_t frame_idx, uint16_t shard_idx, uint64_t sequence, bool retransmission = false)\n"
         "\t{\n"
         "\t\tif (stop_token.stop_requested())\n"
-        "\t\t\tthrow std::runtime_error(\"synthetic transport cancelled\");\n\n"
+        '\t\t\tthrow std::runtime_error("synthetic transport cancelled");\n\n'
         "\t\tto_headset::video_stream_data_shard packet{};\n"
         "\t\tpacket.stream_item_idx = stream;\n"
         "\t\tpacket.frame_idx = frame_idx;\n"
@@ -67,8 +68,10 @@ def main() -> int:
         "\tvoid send_frame(const packet_plan & plan)\n\t{",
     )
 
-    helper_anchor = "\n} // namespace\n\nint run(wivrn_connection & connection, std::stop_token stop_token)"
-    helpers = r'''
+    helper_anchor = (
+        "\n} // namespace\n\nint run(wivrn_connection & connection, std::stop_token stop_token)"
+    )
+    helpers = r"""
 
 bool run_duplicate_case(sender & tx, wivrn_connection & connection, uint8_t stream, uint64_t frame)
 {
@@ -192,14 +195,15 @@ bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t str
 	        obs.rtx.size());
 	return good;
 }
-'''
+"""
     text = replace_once(text, helper_anchor, helpers + helper_anchor)
 
-    loop_anchor = "\tfor (size_t i = 0; i < random_case_count; ++i)\n\t{\n"
     # Keep the existing random corpus, then insert the explicit envelope/torture sweep
     # immediately before result reduction.
-    result_anchor = "\n\tconst double good_ratio = s.total ? double(s.good) / double(s.total) : 0.0;"
-    extra_run = r'''
+    result_anchor = (
+        "\n\tconst double good_ratio = s.total ? double(s.good) / double(s.total) : 0.0;"
+    )
+    extra_run = r"""
 
 	// Real receiver loss staircase: every contiguous omission size on both production streams.
 	for (uint16_t missing = 1; missing <= shards_per_frame; ++missing)
@@ -240,7 +244,7 @@ bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t str
 		s.ordering_good += good;
 		frame[stream] += 4;
 	}
-'''
+"""
     text = replace_once(text, result_anchor, extra_run + result_anchor)
 
     text = replace_once(
@@ -260,47 +264,49 @@ bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t str
 
     old_log = (
         '\tU_LOG_I("HELIX_SYNTHETIC_TRANSPORT_RESULT pass=%d total=%llu good=%llu good_ratio=%.6f fallback_total=%llu fallback_good=%llu fallback_ratio=%.6f recorded_total=%llu recorded_good=%llu recorded_ratio=%.6f catastrophic=%llu",\n'
-        '\t        pass,\n'
-        '\t        static_cast<unsigned long long>(s.total),\n'
-        '\t        static_cast<unsigned long long>(s.good),\n'
-        '\t        good_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.fallback_total),\n'
-        '\t        static_cast<unsigned long long>(s.fallback_good),\n'
-        '\t        fallback_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.recorded_total),\n'
-        '\t        static_cast<unsigned long long>(s.recorded_good),\n'
-        '\t        recorded_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.catastrophic));'
+        "\t        pass,\n"
+        "\t        static_cast<unsigned long long>(s.total),\n"
+        "\t        static_cast<unsigned long long>(s.good),\n"
+        "\t        good_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.fallback_total),\n"
+        "\t        static_cast<unsigned long long>(s.fallback_good),\n"
+        "\t        fallback_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.recorded_total),\n"
+        "\t        static_cast<unsigned long long>(s.recorded_good),\n"
+        "\t        recorded_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.catastrophic));"
     )
     new_log = (
         '\tU_LOG_I("HELIX_SYNTHETIC_TRANSPORT_RESULT pass=%d total=%llu good=%llu good_ratio=%.6f fallback_total=%llu fallback_good=%llu fallback_ratio=%.6f recorded_total=%llu recorded_good=%llu recorded_ratio=%.6f envelope_total=%llu envelope_good=%llu envelope_ratio=%.6f ordering_total=%llu ordering_good=%llu ordering_ratio=%.6f rtx_total=%llu rtx_good=%llu rtx_ratio=%.6f catastrophic=%llu",\n'
-        '\t        pass,\n'
-        '\t        static_cast<unsigned long long>(s.total),\n'
-        '\t        static_cast<unsigned long long>(s.good),\n'
-        '\t        good_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.fallback_total),\n'
-        '\t        static_cast<unsigned long long>(s.fallback_good),\n'
-        '\t        fallback_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.recorded_total),\n'
-        '\t        static_cast<unsigned long long>(s.recorded_good),\n'
-        '\t        recorded_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.envelope_total),\n'
-        '\t        static_cast<unsigned long long>(s.envelope_good),\n'
-        '\t        envelope_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.ordering_total),\n'
-        '\t        static_cast<unsigned long long>(s.ordering_good),\n'
-        '\t        ordering_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.rtx_total),\n'
-        '\t        static_cast<unsigned long long>(s.rtx_good),\n'
-        '\t        rtx_ratio,\n'
-        '\t        static_cast<unsigned long long>(s.catastrophic));'
+        "\t        pass,\n"
+        "\t        static_cast<unsigned long long>(s.total),\n"
+        "\t        static_cast<unsigned long long>(s.good),\n"
+        "\t        good_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.fallback_total),\n"
+        "\t        static_cast<unsigned long long>(s.fallback_good),\n"
+        "\t        fallback_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.recorded_total),\n"
+        "\t        static_cast<unsigned long long>(s.recorded_good),\n"
+        "\t        recorded_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.envelope_total),\n"
+        "\t        static_cast<unsigned long long>(s.envelope_good),\n"
+        "\t        envelope_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.ordering_total),\n"
+        "\t        static_cast<unsigned long long>(s.ordering_good),\n"
+        "\t        ordering_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.rtx_total),\n"
+        "\t        static_cast<unsigned long long>(s.rtx_good),\n"
+        "\t        rtx_ratio,\n"
+        "\t        static_cast<unsigned long long>(s.catastrophic));"
     )
     text = replace_once(text, old_log, new_log)
 
     Path(PATH).write_text(text)
     try:
         subprocess.run(["git", "diff", "--check", "--", PATH], check=True)
-        changed = subprocess.check_output(["git", "diff", "--name-only", "--", PATH], text=True).splitlines()
+        changed = subprocess.check_output(
+            ["git", "diff", "--name-only", "--", PATH], text=True
+        ).splitlines()
         if changed != [PATH]:
             raise RuntimeError(f"unexpected changed paths: {changed}")
         for marker in (
@@ -317,6 +323,7 @@ bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t str
             if marker not in text:
                 raise RuntimeError(f"required marker missing: {marker}")
     except Exception:
+        logging.getLogger(__name__).exception("Operation failed")
         Path(PATH).write_text(original)
         raise
 
@@ -328,5 +335,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        logging.getLogger(__name__).exception("Operation failed")
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2)

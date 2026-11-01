@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import logging
 import pathlib
 import subprocess
 import sys
@@ -128,14 +129,14 @@ def transform_nvenc_cpp(text: str) -> str:
         "\t\tif (status == NV_ENC_SUCCESS)\n"
         "\t\t{\n"
         "\t\t\t++helix_invalidation_applied;\n"
-        "\t\t\tU_LOG_I(\"Helix NVENC invalidated reference stream=%u frame=%llu\",\n"
+        '\t\t\tU_LOG_I("Helix NVENC invalidated reference stream=%u frame=%llu",\n'
         "\t\t\t        stream_idx,\n"
         "\t\t\t        static_cast<unsigned long long>(frame_index));\n"
         "\t\t}\n"
         "\t\telse\n"
         "\t\t{\n"
         "\t\t\t++helix_invalidation_errors;\n"
-        "\t\t\tU_LOG_W(\"Helix NVENC reference invalidation failed stream=%u frame=%llu status=%d\",\n"
+        '\t\t\tU_LOG_W("Helix NVENC reference invalidation failed stream=%u frame=%llu status=%d",\n'
         "\t\t\t        stream_idx,\n"
         "\t\t\t        static_cast<unsigned long long>(frame_index),\n"
         "\t\t\t        static_cast<int>(status));\n"
@@ -149,7 +150,7 @@ def transform_nvenc_cpp(text: str) -> str:
         "{\n"
         "\tsize_t pending_invalidations = 0;\n"
         "\t{\n\t\tstd::scoped_lock lock(helix_invalidation_mutex);\n\t\tpending_invalidations = helix_pending_invalidations.size();\n\t}\n"
-        "\tU_LOG_I(\"Helix NVENC invalidation summary stream=%u queued=%llu applied=%llu nonref_skipped=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu pending=%zu\",\n"
+        '\tU_LOG_I("Helix NVENC invalidation summary stream=%u queued=%llu applied=%llu nonref_skipped=%llu duplicate=%llu overflow=%llu stale=%llu errors=%llu pending=%zu",\n'
         "\t        stream_idx,\n"
         "\t        static_cast<unsigned long long>(helix_invalidation_queued.load(std::memory_order_relaxed)),\n"
         "\t        static_cast<unsigned long long>(helix_invalidation_applied.load(std::memory_order_relaxed)),\n"
@@ -164,11 +165,16 @@ def transform_nvenc_cpp(text: str) -> str:
     )
     text = replace_once(
         text,
-        "\t\t\tidr_handler.reset();\n\n\t\t\tU_LOG_I(\"nvenc: reconfiguring succeeded.\");",
-        "\t\t\tidr_handler.reset();\n\t\t\thelix_clear_reference_invalidations();\n\n\t\t\tU_LOG_I(\"nvenc: reconfiguring succeeded.\");",
+        '\t\t\tidr_handler.reset();\n\n\t\t\tU_LOG_I("nvenc: reconfiguring succeeded.");',
+        '\t\t\tidr_handler.reset();\n\t\t\thelix_clear_reference_invalidations();\n\n\t\t\tU_LOG_I("nvenc: reconfiguring succeeded.");',
         "nvenc reconfigure clear",
     )
-    text = replace_once(text, "\t        .inputTimeStamp = 0,", "\t        .inputTimeStamp = frame_index,", "nvenc frame timestamp")
+    text = replace_once(
+        text,
+        "\t        .inputTimeStamp = 0,",
+        "\t        .inputTimeStamp = frame_index,",
+        "nvenc frame timestamp",
+    )
     return replace_once(
         text,
         "\t\tNVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));\n\t\tNVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &buf_lock_params));",
@@ -205,6 +211,7 @@ def main() -> int:
         if set(changed) != set(transforms) or len(changed) != len(transforms):
             raise RuntimeError(f"unexpected changed paths: {changed!r}")
     except Exception:
+        logging.getLogger(__name__).exception("Operation failed")
         for rel, before in originals.items():
             (ROOT / rel).write_text(before)
         raise
@@ -220,5 +227,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        logging.getLogger(__name__).exception("Operation failed")
         print(f"Helix transform gate: {exc}", file=sys.stderr)
         raise SystemExit(1)

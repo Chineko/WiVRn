@@ -8,6 +8,7 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
         raise SystemExit(f"error: {label} anchor count={count}")
     return text.replace(old, new, 1)
 
+
 ve = Path("server/encoder/video_encoder.cpp")
 text = ve.read_text()
 

@@ -232,7 +232,8 @@ inline bool hevc10_erase_exact(std::array<std::optional<uint64_t>, N> & slots, u
 
 template <size_t N>
 inline std::optional<uint64_t> hevc10_erase_oldest_leq(
-        std::array<std::optional<uint64_t>, N> & slots, uint64_t frame_index)
+        std::array<std::optional<uint64_t>, N> & slots,
+        uint64_t frame_index)
 {
 	std::optional<size_t> best;
 	for (size_t i = 0; i < N; ++i)

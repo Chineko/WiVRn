@@ -467,7 +467,6 @@ bool run_rtx_rescue_case(sender & tx, wivrn_connection & connection, uint8_t str
 	return good;
 }
 
-
 // ---------------------------------------------------------------------------------------
 // Sustained VRChat-like trace replay (HELIX_SYNTHETIC_TRACE=<file>).
 //
@@ -552,7 +551,12 @@ int run_trace(wivrn_connection & connection, std::stop_token stop_token, const c
 		if (row.bytes > limit)
 		{
 			U_LOG_E("HELIX_VRCHAT_TRACE_INVALID payload_would_clamp stream=%u frame=%llu shard=%u bytes=%u limit=%zu retransmission=%d",
-			        row.stream, static_cast<unsigned long long>(row.frame), row.shard, row.bytes, limit, retransmission);
+			        row.stream,
+			        static_cast<unsigned long long>(row.frame),
+			        row.shard,
+			        row.bytes,
+			        limit,
+			        retransmission);
 			return false;
 		}
 		packet.payload = std::span<uint8_t>{filler.data(), row.bytes};
@@ -659,9 +663,7 @@ int run_trace(wivrn_connection & connection, std::stop_token stop_token, const c
 		{
 			std::fprintf(out, "stream,frame,shard,sequence,nominal_us,actual_us\n");
 			for (const auto & r: send_log)
-				std::fprintf(out, "%u,%llu,%u,%llu,%lld,%lld\n", r.stream, static_cast<unsigned long long>(r.frame), r.shard,
-				             static_cast<unsigned long long>(r.sequence), static_cast<long long>(r.nominal_us),
-				             static_cast<long long>(r.actual_us));
+				std::fprintf(out, "%u,%llu,%u,%llu,%lld,%lld\n", r.stream, static_cast<unsigned long long>(r.frame), r.shard, static_cast<unsigned long long>(r.sequence), static_cast<long long>(r.nominal_us), static_cast<long long>(r.actual_us));
 			std::fclose(out);
 		}
 		else
@@ -728,14 +730,26 @@ int run_trace(wivrn_connection & connection, std::stop_token stop_token, const c
 	        "clean_complete=%llu clean_failed=%llu damaged_recovered=%llu damaged_unrecovered=%llu false_complete=%llu "
 	        "rtx_canary_candidates=%llu rtx_canary_recovered=%llu gap_reports=%zu rtx_requests=%zu rtx_retransmissions=%llu "
 	        "assembly_ms(p50/p99/max)=%.3f/%.3f/%.3f send_lateness_ms(p50/p99/max)=%.3f/%.3f/%.3f",
-	        pass, static_cast<unsigned long long>(frames_total), static_cast<unsigned long long>(sent),
-	        static_cast<unsigned long long>(path_dropped), static_cast<unsigned long long>(clean_complete),
-	        static_cast<unsigned long long>(clean_failed), static_cast<unsigned long long>(damaged_recovered),
-	        static_cast<unsigned long long>(damaged_unrecovered), static_cast<unsigned long long>(false_complete),
-	        static_cast<unsigned long long>(rtx_canary_candidates), static_cast<unsigned long long>(rtx_canary_recovered),
-	        obs.gaps.size(), obs.rtx.size(), static_cast<unsigned long long>(rtx_retransmissions),
-	        percentile(assembly_ms, 0.5), percentile(assembly_ms, 0.99), percentile(assembly_ms, 1.0),
-	        percentile(late_ms, 0.5), percentile(late_ms, 0.99), percentile(late_ms, 1.0));
+	        pass,
+	        static_cast<unsigned long long>(frames_total),
+	        static_cast<unsigned long long>(sent),
+	        static_cast<unsigned long long>(path_dropped),
+	        static_cast<unsigned long long>(clean_complete),
+	        static_cast<unsigned long long>(clean_failed),
+	        static_cast<unsigned long long>(damaged_recovered),
+	        static_cast<unsigned long long>(damaged_unrecovered),
+	        static_cast<unsigned long long>(false_complete),
+	        static_cast<unsigned long long>(rtx_canary_candidates),
+	        static_cast<unsigned long long>(rtx_canary_recovered),
+	        obs.gaps.size(),
+	        obs.rtx.size(),
+	        static_cast<unsigned long long>(rtx_retransmissions),
+	        percentile(assembly_ms, 0.5),
+	        percentile(assembly_ms, 0.99),
+	        percentile(assembly_ms, 1.0),
+	        percentile(late_ms, 0.5),
+	        percentile(late_ms, 0.99),
+	        percentile(late_ms, 1.0));
 	return pass ? 0 : 1;
 }
 

@@ -1056,7 +1056,7 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 	if (helix_synthetic_transport_enabled)
 		return helix_synthetic_result.load(std::memory_order_acquire) == 0
 		               ? int(wivrn_exit_code::success)
-			       : int(wivrn_exit_code::unknown_error);
+		               : int(wivrn_exit_code::unknown_error);
 
 	return wivrn_exit_code::success;
 }

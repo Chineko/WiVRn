@@ -130,7 +130,7 @@ void scenes::stream::operator()(to_headset::video_stream_data_shard && shard)
 		helix_rtx_frame_deadline[idx] = helix_rtx_deadline{
 		        .frame_idx = shard.frame_idx,
 		        .display_time = shard.view_info->display_time,
-	};
+		};
 
 	if (shard.packet_sequence == 0)
 	{

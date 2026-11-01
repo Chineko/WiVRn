@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-from pathlib import Path
+import logging
 import subprocess
 import sys
+from pathlib import Path
 
 BASE = "tools/helix-apply-quest-transport-torture.py"
 PATH = "server/helix_synthetic_transport.cpp"
@@ -68,6 +69,7 @@ def main() -> int:
             if marker not in text:
                 raise RuntimeError(f"required v2 marker missing: {marker}")
     except Exception:
+        logging.getLogger(__name__).exception("Operation failed")
         Path(PATH).write_text(original)
         raise
 
@@ -79,5 +81,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        logging.getLogger(__name__).exception("Operation failed")
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2)

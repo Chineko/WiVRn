@@ -268,7 +268,7 @@ video_encoder_nvenc::video_encoder_nvenc(
 
 	auto command_buffers = vk.device.allocateCommandBuffers(
 	        {.commandPool = *cmd_pool,
-		 .commandBufferCount = num_slots});
+	         .commandBufferCount = num_slots});
 	for (size_t i = 0; i < num_slots; ++i)
 	{
 		in[i].cmd = std::move(command_buffers[i]);
@@ -525,8 +525,13 @@ video_encoder_nvenc::~video_encoder_nvenc()
 {
 	if (helix_peak_bytes)
 		U_LOG_I("HELIX_ENCODED_PEAK stream=%u frame=%llu output_timestamp=%llu bytes=%u picture_type=%u avg_qp=%u invalidations_applied=%llu",
-		        stream_idx, (unsigned long long)helix_peak_frame, (unsigned long long)helix_peak_output_timestamp,
-		        helix_peak_bytes, unsigned(helix_peak_type), helix_peak_qp, (unsigned long long)helix_peak_invalidations);
+		        stream_idx,
+		        (unsigned long long)helix_peak_frame,
+		        (unsigned long long)helix_peak_output_timestamp,
+		        helix_peak_bytes,
+		        unsigned(helix_peak_type),
+		        helix_peak_qp,
+		        (unsigned long long)helix_peak_invalidations);
 	size_t pending_invalidations = 0;
 	{
 		std::scoped_lock lock(helix_invalidation_mutex);

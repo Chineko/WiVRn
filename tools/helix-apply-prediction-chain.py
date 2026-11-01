@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import pathlib
 import subprocess
 import sys
@@ -84,14 +85,14 @@ def transform_nvenc_cpp(helper, text: str) -> str:
         "\tNVENC_CHECK(shared_state->fn.nvEncGetEncodeCaps(\n"
         "\t        session_handle, encodeGUID, &ref_invalidation_cap, &ref_invalidation_supported));\n"
         "\thelix_ref_invalidation_supported = ref_invalidation_supported == 1;\n"
-        "\tU_LOG_I(\"Helix NVENC reference invalidation stream=%u supported=%d\",\n"
+        '\tU_LOG_I("Helix NVENC reference invalidation stream=%u supported=%d",\n'
         "\t        stream_idx, helix_ref_invalidation_supported);\n",
         "reference invalidation capability query",
     )
     text = replace_once(
         text,
-        "\tU_LOG_I(\"Helix NVENC invalidation summary stream=%u queued=%llu",
-        "\tU_LOG_I(\"Helix NVENC invalidation summary stream=%u supported=%d queued=%llu",
+        '\tU_LOG_I("Helix NVENC invalidation summary stream=%u queued=%llu',
+        '\tU_LOG_I("Helix NVENC invalidation summary stream=%u supported=%d queued=%llu',
         "invalidation summary capability field",
     )
     return replace_once(
@@ -139,8 +140,11 @@ def main() -> int:
         )
         missing = [needle for needle in required if needle not in diff]
         if missing:
-            raise RuntimeError(f"required experiment changes absent from resulting diff: {missing!r}")
+            raise RuntimeError(
+                f"required experiment changes absent from resulting diff: {missing!r}"
+            )
     except Exception:
+        logging.getLogger(__name__).exception("Operation failed")
         for rel, before in originals.items():
             (ROOT / rel).write_text(before)
         raise
@@ -160,5 +164,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        logging.getLogger(__name__).exception("Operation failed")
         print(f"Helix transform gate: {exc}", file=sys.stderr)
         raise SystemExit(1)

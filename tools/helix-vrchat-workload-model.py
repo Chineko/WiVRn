@@ -36,6 +36,7 @@ fate: K = send at t_send_us, D = path-dropped (t_send_us = -1; still consumes a 
 Rows are in generation order; t_send is non-decreasing over K rows (FIFO, no reordering).
 A frame is expected complete at the receiver iff none of its rows is D.
 """
+
 import argparse
 import hashlib
 import json
@@ -43,6 +44,7 @@ import math
 import random
 import re
 import sys
+from pathlib import Path
 
 RAW_FRAME_BYTES = 256 * 160 * 3 // 2  # raw_decoder buffer used by the synthetic mode (61440)
 
@@ -51,30 +53,37 @@ RAW_FRAME_BYTES = 256 * 160 * 3 // 2  # raw_decoder buffer used by the synthetic
 # VRChat, 60-person torture world), 86 387 / 86 391 frames per eye.
 # --------------------------------------------------------------------------------------
 CAL = {
-    "fps": 90.0,                       # A: target_fps=90, inter_frame_gap avg 11116 us
-    "frame_bytes_mean": 28430.0,       # A: avg 28319 (s0) / 28540 (s1)
-    "frame_bytes_max": 60134,          # A: max 59905 (s0) / 60134 (s1)
-    "shard_payload": 1385,             # A: 2465551855 B / 1820992 shards = 1354 B avg incl. partial shards
-    "shards_mean": 21.0,               # A: 20.9 / 21.1 (avg shards per frame)
-    "shards_max": 44,                  # A: max 44
-    "pacer_spacing_us": 50,            # A: version=fixed-50us-v1
-    "stream1_offset_ms": (2.0, 4.5),   # B: blackout capture, stream0/stream1 gap reports ~3-6 ms apart
-    "slow_send_p": 0.0015,             # A: hist_send_span 2-4 ms bucket 130/86387
+    "fps": 90.0,  # A: target_fps=90, inter_frame_gap avg 11116 us
+    "frame_bytes_mean": 28430.0,  # A: avg 28319 (s0) / 28540 (s1)
+    "frame_bytes_max": 60134,  # A: max 59905 (s0) / 60134 (s1)
+    "shard_payload": 1385,  # A: 2465551855 B / 1820992 shards = 1354 B avg incl. partial shards
+    "shards_mean": 21.0,  # A: 20.9 / 21.1 (avg shards per frame)
+    "shards_max": 44,  # A: max 44
+    "pacer_spacing_us": 50,  # A: version=fixed-50us-v1
+    "stream1_offset_ms": (
+        2.0,
+        4.5,
+    ),  # B: blackout capture, stream0/stream1 gap reports ~3-6 ms apart
+    "slow_send_p": 0.0015,  # A: hist_send_span 2-4 ms bucket 130/86387
     "slow_send_ms": (2.0, 4.0),
-    "producer_stall_per_min": 0.25,    # A: 4 frame gaps (43-66 ms) in 16 min; B had one of 165 ms
+    "producer_stall_per_min": 0.25,  # A: 4 frame gaps (43-66 ms) in 16 min; B had one of 165 ms
     "producer_stall_ms": (40.0, 170.0),
     "producer_stall_median_ms": 55.0,
     # ASSUMED shapes (only mean/max are pinned): AR(1) log-size, IDR multiplier.
-    "size_sigma": 0.18,                # fit so that max over ~86k frames ~ 60 KB for the pinned mean
+    "size_sigma": 0.18,  # fit so that max over ~86k frames ~ 60 KB for the pinned mean
     "size_rho": 0.98,
     "idr_multiplier": (1.8, 2.4),
     "idr_after_stall_p": 0.5,
     "idr_after_net_event_p": 0.8,
-    "idr_delay_ms": (50.0, 180.0),     # A: report/IDR delay after gaps 13-182 ms
+    "idr_delay_ms": (50.0, 180.0),  # A: report/IDR delay after gaps 13-182 ms
     # Path impairment priors, fitted to: B = paired pcap (90-packet/18.2 ms run, survivors
     # +30.6/+20/+15..25/+17/+43/+33 ms), C = no-WiVRn 1-packet/burst run (89.3 ms, 0 loss).
-    "event_mix": (0.60, 0.25, 0.15),   # erasure_hold, hold, short_erasure
-    "followup_mix": (0.35, 0.0, 0.65), # B: after the 90-packet run came 4/2/2-packet runs, then one 48-packet run
+    "event_mix": (0.60, 0.25, 0.15),  # erasure_hold, hold, short_erasure
+    "followup_mix": (
+        0.35,
+        0.0,
+        0.65,
+    ),  # B: after the 90-packet run came 4/2/2-packet runs, then one 48-packet run
     "erasure_L_ms": (10.0, 19.0),
     "hold_after_loss_ms": (15.0, 60.0),
     "hold_after_loss_median_ms": 30.0,
@@ -83,7 +92,7 @@ CAL = {
     "cluster_p": 0.5,
     "cluster_followups": (1, 3),
     "cluster_gap_ms": (5.0, 80.0),
-    "drain_gap_us": 14,                # ASSUMED: ~1400 B at ~800 Mbit/s effective release rate
+    "drain_gap_us": 14,  # ASSUMED: ~1400 B at ~800 Mbit/s effective release rate
     "warmup_s": 3.0,
 }
 
@@ -116,7 +125,13 @@ def make_frame_times(rng, cal, prof, dur_us):
     stalls = poisson_times(rng, prof["producer_stall_per_min"], int(cal["warmup_s"] * 1e6), dur_us)
     stall_spans = []
     for s in stalls:
-        d = clip(rng.lognormvariate(math.log(cal["producer_stall_median_ms"]), 0.35), *cal["producer_stall_ms"]) * 1000
+        d = (
+            clip(
+                rng.lognormvariate(math.log(cal["producer_stall_median_ms"]), 0.35),
+                *cal["producer_stall_ms"],
+            )
+            * 1000
+        )
         stall_spans.append((s, int(s + d)))
     times, after_stall = [], set()
     t, si = 0.0, 0
@@ -135,7 +150,9 @@ def make_frame_times(rng, cal, prof, dur_us):
 
 
 def sample_net_events(rng, cal, prof, dur_us):
-    starts = poisson_times(rng, prof["net_events_per_min"], int(cal["warmup_s"] * 1e6) + 500_000, dur_us - 500_000)
+    starts = poisson_times(
+        rng, prof["net_events_per_min"], int(cal["warmup_s"] * 1e6) + 500_000, dur_us - 500_000
+    )
     events = []
 
     def one(t, mix=None):
@@ -144,7 +161,13 @@ def sample_net_events(rng, cal, prof, dur_us):
         if u < mix[0]:
             kind = "erasure_hold"
             L = rng.uniform(*cal["erasure_L_ms"]) * 1000
-            H = clip(rng.lognormvariate(math.log(cal["hold_after_loss_median_ms"]), 0.35), *cal["hold_after_loss_ms"]) * 1000
+            H = (
+                clip(
+                    rng.lognormvariate(math.log(cal["hold_after_loss_median_ms"]), 0.35),
+                    *cal["hold_after_loss_ms"],
+                )
+                * 1000
+            )
         elif u < mix[0] + mix[1]:
             kind, L, H = "hold", 0.0, rng.uniform(*cal["hold_only_ms"]) * 1000
         else:
@@ -181,7 +204,6 @@ def generate(seed, duration_s, profile, cal=CAL):
     mu = math.log(cal["frame_bytes_mean"]) - sigma * sigma / 2
     cap = min(cal["frame_bytes_max"], RAW_FRAME_BYTES)
     x = [rng.gauss(0, sigma), rng.gauss(0, sigma)]
-    idr_pending = [None, None]  # frame time at/after which the stream emits an IDR
     net_end_times = [e["e"] for e in events]
     idr_due = []
     for e in net_end_times:
@@ -208,10 +230,12 @@ def generate(seed, duration_s, profile, cal=CAL):
             edge_payload = min(1200, cal["shard_payload"])
             nshards = -(-nbytes // cal["shard_payload"])
             nshards = min(nshards, cal["shards_max"])
-            def capacity(n):
+
+            def capacity(n, edge_payload=edge_payload):
                 if n == 1:
                     return edge_payload
                 return (n - 2) * cal["shard_payload"] + 2 * edge_payload
+
             while nshards < cal["shards_max"] and nbytes > capacity(nshards):
                 nshards += 1
             nbytes = min(nbytes, capacity(nshards))
@@ -238,7 +262,7 @@ def generate(seed, duration_s, profile, cal=CAL):
     rows, out_free, ei = [], 0, 0
     drop_frames = set()
     max_delay = 0
-    for (tg, s, f, sh, ns, pb) in packets:
+    for tg, s, f, sh, ns, pb in packets:
         while ei < len(events) and events[ei]["e"] <= tg:
             ei += 1
         ev = events[ei] if ei < len(events) and events[ei]["s"] <= tg < events[ei]["e"] else None
@@ -260,7 +284,13 @@ def generate(seed, duration_s, profile, cal=CAL):
     for wanted_stream in (0, 1):
         for i, row in enumerate(rows):
             tg, ts, s, f, sh, ns, pb = row
-            if s == wanted_stream and sh == 0 and ts is not None and (s, f) not in drop_frames and tg >= 1_000_000:
+            if (
+                s == wanted_stream
+                and sh == 0
+                and ts is not None
+                and (s, f) not in drop_frames
+                and tg >= 1_000_000
+            ):
                 rows[i] = (tg, None, s, f, sh, ns, pb)
                 drop_frames.add((s, f))
                 rtx_canary_frames[s] = f
@@ -268,24 +298,35 @@ def generate(seed, duration_s, profile, cal=CAL):
     if len(rtx_canary_frames) != 2:
         raise RuntimeError("failed to place both RTX canaries")
     return {
-        "rows": rows, "events": events, "stall_spans": stall_spans, "frame_meta": frame_meta,
-        "drop_frames": drop_frames, "rtx_canary_frames": rtx_canary_frames, "max_delay_us": max_delay, "seed": seed,
-        "duration_s": duration_s, "profile": profile,
+        "rows": rows,
+        "events": events,
+        "stall_spans": stall_spans,
+        "frame_meta": frame_meta,
+        "drop_frames": drop_frames,
+        "rtx_canary_frames": rtx_canary_frames,
+        "max_delay_us": max_delay,
+        "seed": seed,
+        "duration_s": duration_s,
+        "profile": profile,
     }
 
 
 def write_trace(tr, path):
     h = hashlib.sha256()
     lines = []
-    for (tg, ts, s, f, sh, ns, pb) in tr["rows"]:
-        line = f"P,{tg},{-1 if ts is None else ts},{s},{f},{sh},{ns},{pb},{'D' if ts is None else 'K'}"
+    for tg, ts, s, f, sh, ns, pb in tr["rows"]:
+        line = (
+            f"P,{tg},{-1 if ts is None else ts},{s},{f},{sh},{ns},{pb},{'D' if ts is None else 'K'}"
+        )
         lines.append(line)
         h.update(line.encode() + b"\n")
     with open(path, "w") as fh:
         fh.write("# helix-vrchat-trace v1\n")
         fh.write(f"# seed={tr['seed']} duration_s={tr['duration_s']} profile={tr['profile']}\n")
         fh.write(f"# rows={len(lines)} rows_sha256={h.hexdigest()}\n")
-        fh.write("# P,t_gen_us,t_send_us,stream,frame_idx,shard_idx,shards_in_frame,payload_bytes,fate\n")
+        fh.write(
+            "# P,t_gen_us,t_send_us,stream,frame_idx,shard_idx,shards_in_frame,payload_bytes,fate\n"
+        )
         fh.write("\n".join(lines) + "\n")
     return h.hexdigest()
 
@@ -293,7 +334,7 @@ def write_trace(tr, path):
 def stats(tr, cal=CAL):
     fm = tr["frame_meta"]
     per = {0: [], 1: []}
-    for (s, f, nbytes, ns, t0, idr) in fm:
+    for s, f, nbytes, ns, t0, idr in fm:
         per[s].append((t0, nbytes, ns, idr))
     out = {}
     for s in (0, 1):
@@ -349,13 +390,18 @@ def calibration_failures(st, cal=CAL):
 
 def parse_pacing_log(path):
     """Re-pin size/cadence numbers from 'Helix pacing baseline stream N:' lines."""
-    rx = re.compile(r"frame_bytes\(avg/max\)=(\d+)/(\d+) frame_shards\(avg/max\)=(\d+)/(\d+).*?inter_frame_gap\(avg/max\)=(\d+)/(\d+)us")
+    rx = re.compile(
+        r"frame_bytes\(avg/max\)=(\d+)/(\d+) frame_shards\(avg/max\)=(\d+)/(\d+).*?inter_frame_gap\(avg/max\)=(\d+)/(\d+)us"
+    )
     means, maxes, smax, gaps = [], [], [], []
-    for line in open(path, errors="replace"):
+    for line in Path(path).read_text(errors="replace").splitlines():
         if "Helix pacing baseline stream" in line:
             m = rx.search(line)
             if m:
-                means.append(int(m[1])); maxes.append(int(m[2])); smax.append(int(m[4])); gaps.append(int(m[5]))
+                means.append(int(m[1]))
+                maxes.append(int(m[2]))
+                smax.append(int(m[4]))
+                gaps.append(int(m[5]))
     if not means:
         raise SystemExit(f"no 'Helix pacing baseline' lines parsed in {path}")
     cal = dict(CAL)
@@ -376,42 +422,72 @@ def self_test():
     h = lambda t: hashlib.sha256(repr(t["rows"]).encode()).hexdigest()
     c = generate(2, 120, "measured")
     det = h(a) == h(b) and h(a) != h(c)
-    print(f"[1] determinism (same seed identical, different seed differs): {'PASS' if det else 'FAIL'}"); ok &= det
+    print(
+        f"[1] determinism (same seed identical, different seed differs): {'PASS' if det else 'FAIL'}"
+    )
+    ok &= det
 
     full = generate(7, 900, "measured")
     st = stats(full)
     bad = calibration_failures(st)
-    print(f"[2] calibration vs pinned measurements (900 s, measured profile): {'PASS' if not bad else 'FAIL ' + str(bad)}"); ok &= not bad
-    print(f"    s0 mean {st['s0']['bytes_mean']:.0f} B max {st['s0']['bytes_max']} shards {st['s0']['shards_mean']:.2f}/{st['s0']['shards_max']} gap {st['s0']['gap_mean_ms']:.3f} ms")
-    print(f"    {st['pps_total']:.0f} pps, {st['net_events']} path events, {st['producer_stalls']} producer stalls, max delay {st['max_path_delay_ms']:.1f} ms")
+    print(
+        f"[2] calibration vs pinned measurements (900 s, measured profile): {'PASS' if not bad else 'FAIL ' + str(bad)}"
+    )
+    ok &= not bad
+    print(
+        f"    s0 mean {st['s0']['bytes_mean']:.0f} B max {st['s0']['bytes_max']} shards {st['s0']['shards_mean']:.2f}/{st['s0']['shards_max']} gap {st['s0']['gap_mean_ms']:.3f} ms"
+    )
+    print(
+        f"    {st['pps_total']:.0f} pps, {st['net_events']} path events, {st['producer_stalls']} producer stalls, max delay {st['max_path_delay_ms']:.1f} ms"
+    )
 
-    need = st["producer_stalls"] >= 1 and st["net_events"] >= 1 and st["dropped_packets"] > 0 and st["delayed_gt15ms"] > 0
-    print(f"[3] workload exercises stalls, drops and late survivors: {'PASS' if need else 'FAIL'}"); ok &= need
+    need = (
+        st["producer_stalls"] >= 1
+        and st["net_events"] >= 1
+        and st["dropped_packets"] > 0
+        and st["delayed_gt15ms"] > 0
+    )
+    print(f"[3] workload exercises stalls, drops and late survivors: {'PASS' if need else 'FAIL'}")
+    ok &= need
 
     # Mutation checks: deliberately wrong workloads must be rejected by the calibration gate.
     mut = []
-    for name, over in (("2x frame size", {"frame_bytes_mean": CAL["frame_bytes_mean"] * 2.0}),
-                       ("72 Hz cadence", {"fps": 72.0}),
-                       ("tiny shards", {"shard_payload": 700})):
-        m = dict(CAL); m.update(over)
+    for name, over in (
+        ("2x frame size", {"frame_bytes_mean": CAL["frame_bytes_mean"] * 2.0}),
+        ("72 Hz cadence", {"fps": 72.0}),
+        ("tiny shards", {"shard_payload": 700}),
+    ):
+        m = dict(CAL)
+        m.update(over)
         mst = stats(generate(7, 120, "measured", m))
-        rejected = bool(calibration_failures(mst))  # judged against the pinned CAL, not the mutated one
+        rejected = bool(
+            calibration_failures(mst)
+        )  # judged against the pinned CAL, not the mutated one
         mut.append((name, rejected))
     all_rej = all(r for _, r in mut)
-    print(f"[4] mutation checks rejected: {mut} -> {'PASS' if all_rej else 'FAIL'}"); ok &= all_rej
+    print(f"[4] mutation checks rejected: {mut} -> {'PASS' if all_rej else 'FAIL'}")
+    ok &= all_rej
 
     # Event counts are Poisson, so compare over the maximum duration with a margin well below the 4x rate ratio.
     m_long = stats(generate(7, 1800, "measured"))
     t_long = stats(generate(7, 1800, "torture"))
-    dens = t_long["net_events"] >= 2 * m_long["net_events"] and t_long["producer_stalls"] >= 2 * m_long["producer_stalls"]
-    print(f"[5] torture profile denser than measured over 1800 s (events {t_long['net_events']} vs {m_long['net_events']}, "
-          f"producer stalls {t_long['producer_stalls']} vs {m_long['producer_stalls']}): {'PASS' if dens else 'FAIL'}"); ok &= dens
+    dens = (
+        t_long["net_events"] >= 2 * m_long["net_events"]
+        and t_long["producer_stalls"] >= 2 * m_long["producer_stalls"]
+    )
+    print(
+        f"[5] torture profile denser than measured over 1800 s (events {t_long['net_events']} vs {m_long['net_events']}, "
+        f"producer stalls {t_long['producer_stalls']} vs {m_long['producer_stalls']}): {'PASS' if dens else 'FAIL'}"
+    )
+    ok &= dens
     print("SELF-TEST", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--out", help="trace file to write")
     ap.add_argument("--summary-json", help="write generation summary here")
     ap.add_argument("--seed", type=int, default=20261031)
@@ -438,10 +514,12 @@ def main():
     st["events"] = tr["events"]
     st["producer_stall_spans_us"] = tr["stall_spans"]
     if a.summary_json:
-        json.dump(st, open(a.summary_json, "w"), indent=1)
-    print(f"wrote {a.out}: {st['packets']} packets, {st['dropped_packets']} path-dropped, "
-          f"{st['frames_expected_incomplete']} frames expected incomplete, {st['net_events']} path events, "
-          f"{st['producer_stalls']} producer stalls, max delay {st['max_path_delay_ms']:.1f} ms, sha256 {digest[:16]}")
+        Path(a.summary_json).write_text(json.dumps(st, indent=1))
+    print(
+        f"wrote {a.out}: {st['packets']} packets, {st['dropped_packets']} path-dropped, "
+        f"{st['frames_expected_incomplete']} frames expected incomplete, {st['net_events']} path events, "
+        f"{st['producer_stalls']} producer stalls, max delay {st['max_path_delay_ms']:.1f} ms, sha256 {digest[:16]}"
+    )
     return 0
 
 

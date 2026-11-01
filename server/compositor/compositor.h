@@ -26,8 +26,8 @@
 
 #include "encoder/encoder_settings.h"
 #include "foveation.h"
-#include "layer_squasher.h"
 #include "helix_production_schedule.h"
+#include "layer_squasher.h"
 #include "pacer.h"
 #include "utils/wivrn_vk_bundle.h"
 

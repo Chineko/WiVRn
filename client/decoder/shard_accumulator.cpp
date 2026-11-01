@@ -80,7 +80,9 @@ std::optional<uint16_t> shard_set::insert(data_shard && shard, xr::instance & in
 		received_retransmission = true;
 		if (shard.shard_idx == 0)
 			spdlog::info("HELIX_HEVC10_RTX_RECEIVED stream={} frame={} packet_sequence={} shard=0",
-			             shard.stream_item_idx, shard.frame_idx, shard.packet_sequence);
+			             shard.stream_item_idx,
+			             shard.frame_idx,
+			             shard.packet_sequence);
 	}
 	data[idx] = std::move(shard);
 	return idx;
@@ -206,7 +208,8 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	{
 		helix_diag::hevc10_note_rtx_assembled(current.feedback.stream_index, current.feedback.frame_index);
 		spdlog::info("HELIX_HEVC10_RTX_ASSEMBLED stream={} frame={}",
-		             current.feedback.stream_index, current.feedback.frame_index);
+		             current.feedback.stream_index,
+		             current.feedback.frame_index);
 	}
 
 	decoder_->push_data(payload, data_shards[shard_idx]->frame_idx, not frame_complete);

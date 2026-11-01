@@ -19,9 +19,9 @@
 
 #pragma once
 
+#include "helix_encoded_path.h"
 #include "wivrn_ipc.h"
 #include "wivrn_packets.h"
-#include "helix_encoded_path.h"
 #include "wivrn_sockets.h"
 
 #include <atomic>
@@ -31,8 +31,8 @@
 #include <poll.h>
 #include <stdexcept>
 #include <stop_token>
-#include <system_error>
 #include <sys/time.h>
+#include <system_error>
 
 namespace wivrn
 {
@@ -72,9 +72,14 @@ public:
 	wivrn_connection(const wivrn_connection &) = delete;
 	wivrn_connection & operator=(const wivrn_connection &) = delete;
 
-	~wivrn_connection() { if (encoded_path) encoded_path->close(); }
+	~wivrn_connection()
+	{
+		if (encoded_path)
+			encoded_path->close();
+	}
 
-	void send_stream(to_headset::video_stream_data_shard && packet) try
+	void send_stream(to_headset::video_stream_data_shard && packet)
+	try
 	{
 		// The server forks after accepting a connection. Start the worker lazily
 		// in the child that actually encodes; never inherit a parent worker/mutex.
@@ -82,7 +87,8 @@ public:
 			std::lock_guard guard(encoded_path_mutex);
 			if (const char * path = std::getenv("HELIX_ENCODED_PATH_PLAN"))
 			{
-				if (!has_stream()) throw std::runtime_error("representative path requires UDP");
+				if (!has_stream())
+					throw std::runtime_error("representative path requires UDP");
 				timeval timeout{0, 100000};
 				if (setsockopt(stream.get_fd(), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0)
 					throw std::system_error(errno, std::generic_category(), "representative UDP send timeout");
@@ -91,12 +97,16 @@ public:
 		});
 		if (encoded_path && packet.stream_item_idx < 2)
 		{
-			if (!has_stream() || !active) throw std::runtime_error("representative path requires active UDP");
+			if (!has_stream() || !active)
+				throw std::runtime_error("representative path requires active UDP");
 			encoded_path->push(packet, [this](auto & p) { stream.send(std::move(p)); });
 		}
 		else if (active)
 		{
-			if (stream) stream.send(std::move(packet)); else control.send(std::move(packet));
+			if (stream)
+				stream.send(std::move(packet));
+			else
+				control.send(std::move(packet));
 		}
 	}
 

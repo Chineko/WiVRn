@@ -20,8 +20,8 @@
 // Include first because of incompatibility between Eigen and X includes
 #include "driver/wivrn_session.h"
 
-#include "video_encoder.h"
 #include "helix_production_schedule.h"
+#include "video_encoder.h"
 
 #include "encoder_settings.h"
 #include "os/os_time.h"
@@ -202,7 +202,9 @@ void helix_log_pacing_summary(video_encoder * encoder)
 	uint64_t frame_bytes_avg = stats.frames ? stats.payload_bytes / stats.frames : 0;
 	if (std::getenv("HELIX_ENCODED_PATH_PLAN") && encoder->stream_idx < 2 && stats.frames)
 		U_LOG_I("HELIX_PAYLOAD_PEAK stream=%u frame=%llu bytes=%llu",
-		        encoder->stream_idx, (unsigned long long)stats.frame_bytes_max_frame, (unsigned long long)stats.frame_bytes_max);
+		        encoder->stream_idx,
+		        (unsigned long long)stats.frame_bytes_max_frame,
+		        (unsigned long long)stats.frame_bytes_max);
 	uint64_t frame_shards_avg = stats.frames ? stats.shards / stats.frames : 0;
 	uint64_t send_span_avg_us = stats.frames ? stats.send_span_total_us / stats.frames : 0;
 	uint64_t queue_delay_avg_us = stats.sender_queue_delay_samples ? stats.sender_queue_delay_total_us / stats.sender_queue_delay_samples : 0;
@@ -426,7 +428,7 @@ video_encoder::video_encoder(vk_bundle & vk,
 
 	const char * helix_hevc10 = std::getenv("HELIX_HEVC10_RECOVERY");
 	helix_hevc10_fault_enabled = helix_hevc10 && std::strcmp(helix_hevc10, "1") == 0 && stream_idx < 2 &&
-	                            settings.codec == video_codec::h265 && settings.bit_depth == 10;
+	                             settings.codec == video_codec::h265 && settings.bit_depth == 10;
 	if (helix_hevc10_fault_enabled)
 	{
 		helix_hevc10_fault_target_ordinal = stream_idx == 0 ? 600 : 900;
@@ -742,7 +744,8 @@ void video_encoder::reset()
 
 void video_encoder::set_bitrate(uint32_t bitrate_bps)
 {
-	if (auto rate = helix::encoded_bitrate_override()) bitrate_bps = rate;
+	if (auto rate = helix::encoded_bitrate_override())
+		bitrate_bps = rate;
 	pending_bitrate = bitrate_bps * bitrate_multiplier;
 }
 

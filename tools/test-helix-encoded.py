@@ -18,6 +18,8 @@ def fixture():
               f'HELIX_HEVC10_RTX_SENT stream={eye} frame={f} packet_sequence={seq} exact_canary=1',
               f'HELIX_PATH_RTX_DELIVERED stream={eye} frame={f} packet_sequence={seq}',
               f'HELIX_HEVC10_FAULT_SUMMARY stream={eye} injected=1 exact_rtx_sent=1 pending_sequence=no',
+              f'HELIX_ENCODED_PEAK stream={eye} frame=50 output_timestamp=50 bytes=60000 picture_type=0 avg_qp=20 invalidations_applied=0',
+              f'HELIX_PAYLOAD_PEAK stream={eye} frame=50 bytes=60000',
               f'Helix pacing baseline stream {eye}: frames=27000 frame_bytes(avg/max)=30000/60000 inter_frame_gap(avg/max)=11111/80000us']
         q += [f'HELIX_HEVC10_PROBE_EPOCH stream={eye} epoch=1',
               f'HELIX_HEVC10_RTX_RECEIVED stream={eye} frame={f} packet_sequence={seq} shard=0',
@@ -30,6 +32,20 @@ def fixture():
         'frame_count': 27000, 'calibration': {'frame_bytes_mean': 30000, 'frame_bytes_max': 60000, 'fps': 90}}
 
 class Oracle(unittest.TestCase):
+    def test_peak_evidence_is_independent_and_exact(self):
+        s, q, v, m = fixture()
+        for a in (s.replace('HELIX_ENCODED_PEAK', 'ABSENT'),
+                  s + '\nHELIX_PAYLOAD_PEAK stream=0 frame=50 bytes=60000',
+                  s.replace('output_timestamp=50', 'output_timestamp=51'),
+                  s.replace('frame=50 bytes=60000', 'frame=51 bytes=60000'),
+                  s.replace('output_timestamp=50 bytes=60000', 'output_timestamp=50 bytes=60001'),
+                  s.replace('picture_type=0', 'picture_type=invalid')):
+            with self.subTest(a=a):
+                r = runner.reduce(a, q, v, m)
+                self.assertEqual(r['hevc10_recovery'], 'PASS')
+                self.assertEqual(r['peak_diagnostics'], 'NOT_ESTABLISHED')
+                self.assertEqual(r['overall'], 'NOT_ESTABLISHED')
+
     def test_valid_exact_chain(self):
         self.assertEqual(runner.reduce(*fixture())['overall'], 'PASS')
 

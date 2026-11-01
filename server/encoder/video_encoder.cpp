@@ -89,6 +89,7 @@ struct helix_pacing_stats
 	uint64_t payload_bytes = 0;
 	uint64_t shards = 0;
 	uint64_t frame_bytes_max = 0;
+	uint64_t frame_bytes_max_frame = 0;
 	uint64_t frame_shards_max = 0;
 	uint64_t send_span_total_us = 0;
 	uint64_t send_span_max_us = 0;
@@ -164,7 +165,11 @@ void helix_note_frame_sent(video_encoder * encoder, uint64_t frame_index, uint64
 		stats.frames++;
 		stats.payload_bytes += bytes;
 		stats.shards += shards;
-		stats.frame_bytes_max = std::max(stats.frame_bytes_max, bytes);
+		if (bytes > stats.frame_bytes_max)
+		{
+			stats.frame_bytes_max = bytes;
+			stats.frame_bytes_max_frame = frame_index;
+		}
 		stats.frame_shards_max = std::max(stats.frame_shards_max, shards);
 		stats.send_span_total_us += send_span_us;
 		stats.send_span_max_us = std::max(stats.send_span_max_us, send_span_us);
@@ -195,6 +200,9 @@ void helix_log_pacing_summary(video_encoder * encoder)
 	}
 
 	uint64_t frame_bytes_avg = stats.frames ? stats.payload_bytes / stats.frames : 0;
+	if (std::getenv("HELIX_ENCODED_PATH_PLAN") && encoder->stream_idx < 2 && stats.frames)
+		U_LOG_I("HELIX_PAYLOAD_PEAK stream=%u frame=%llu bytes=%llu",
+		        encoder->stream_idx, (unsigned long long)stats.frame_bytes_max_frame, (unsigned long long)stats.frame_bytes_max);
 	uint64_t frame_shards_avg = stats.frames ? stats.shards / stats.frames : 0;
 	uint64_t send_span_avg_us = stats.frames ? stats.send_span_total_us / stats.frames : 0;
 	uint64_t queue_delay_avg_us = stats.sender_queue_delay_samples ? stats.sender_queue_delay_total_us / stats.sender_queue_delay_samples : 0;

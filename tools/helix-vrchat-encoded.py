@@ -248,12 +248,35 @@ def reduce(server, quest, stimulus, spec):
         if not .75 * c['frame_bytes_max'] <= v['bytes_max'] <= 1.25 * c['frame_bytes_max']: calibration.append(f'eye{eye}:encoded_peak_not_calibrated')
         if abs(v['gap_us'] - 1e6 / c['fps']) > 30: calibration.append(f'eye{eye}:cadence_not_calibrated')
         if not 40_000 <= v['gap_max_us'] <= 212_500: calibration.append(f'eye{eye}:producer_gap_not_representative')
+    # Diagnostic integrity is separate from recovery and traffic acceptance.
+    # Match the independently observed sender maximum to NVENC's locked output.
+    peaks, peak_errors = {}, []
+    for eye in (0, 1):
+        enc = [e for e in events(server, 'HELIX_ENCODED_PEAK') if e.get('stream') == str(eye)]
+        payload = [e for e in events(server, 'HELIX_PAYLOAD_PEAK') if e.get('stream') == str(eye)]
+        if len(enc) != 1 or len(payload) != 1:
+            peak_errors.append(f'eye{eye}:missing_or_duplicate_peak')
+            continue
+        e, p = enc[0], payload[0]
+        peaks[str(eye)] = {'encoder': e, 'payload': p}
+        try:
+            valid = (int(e['bytes']) > 0 and int(e['frame']) >= 0 and
+                     e['frame'] == e['output_timestamp'] == p['frame'] and
+                     int(e['bytes']) == int(p['bytes']) == observed[eye]['bytes_max'] and
+                     int(e['picture_type']) >= 0 and int(e['avg_qp']) >= 0 and
+                     int(e['invalidations_applied']) >= 0)
+        except (KeyError, ValueError):
+            valid = False
+        if not valid:
+            peak_errors.append(f'eye{eye}:peak_identity_or_size_mismatch')
     return {'runtime': 'PASS' if not errors else 'FAIL', 'errors': errors, 'canaries': evidence,
             'traffic_calibration': 'PASS' if not calibration else 'NOT_ESTABLISHED',
             'calibration_errors': calibration, 'observed_pacing': observed,
             'hevc10_recovery': 'PASS' if not errors else 'NOT_ESTABLISHED',
             'pixel_cleanliness': 'NOT_ESTABLISHED',
-            'overall': 'PASS' if not errors and not calibration else 'NOT_ESTABLISHED'}
+            'peak_diagnostics': 'PASS' if not peak_errors else 'NOT_ESTABLISHED',
+            'peak_errors': peak_errors, 'peaks': peaks,
+            'overall': 'PASS' if not errors and not calibration and not peak_errors else 'NOT_ESTABLISHED'}
 
 def verify_seal(bundle):
     seal = json.loads((bundle / 'seal.json').read_text())

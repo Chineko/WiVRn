@@ -62,6 +62,13 @@ private:
 	float fps;
 	uint64_t bitrate;
 	int bytesPerPixel = 1;
+	// Diagnostic only: one retained maximum, written by encode and read after join.
+	uint64_t helix_peak_frame = 0;
+	uint64_t helix_peak_output_timestamp = 0;
+	uint64_t helix_peak_invalidations = 0;
+	uint32_t helix_peak_bytes = 0;
+	uint32_t helix_peak_qp = 0;
+	NV_ENC_PIC_TYPE helix_peak_type = NV_ENC_PIC_TYPE_UNKNOWN;
 
 	static constexpr size_t helix_invalidation_queue_limit = 16;
 	static constexpr uint64_t helix_invalidation_recent_horizon = 64;

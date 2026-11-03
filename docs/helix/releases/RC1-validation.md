@@ -89,3 +89,19 @@ quality/performance claim from unattended smoke. Known clean native user run rem
 the26min NVENC+profile test. Final archive extracted and all10 artifact hashes
 matched. Archive contains only explicitly whitelisted static files, never private
 session staging, installed APK pull, user keys/config, recordings or diagnostics.
+
+## LAN-neutral publication review
+
+User requested removing configured LAN details before publication. Host/Quest
+addresses removed from seal/defaults/docs/release notes; explicit IPv4 command-line
+arguments now required. Missing/invalid-address guards, help and integrity check
+passed. All static package files and expanded APK scanned for the configured LAN
+addresses: none present. New RC commit starts at already-public ec6a57b9 and does
+not include unpublished pre-redaction RC commits.
+
+Full Audit A repeated: exact final parser/validation and variable uses, same route/
+ADB/URI flow from explicit validated arguments, private staging, session ownership,
+cleanup, artifact seals/profile merge and bounded console drain rechecked. No
+native components/settings changed; A PASS. Full B repeated: no addresses or
+private session files published, same native proof and workload boundaries, actual
+VRChat map/start/cleanup gate retained; B PASS before final15s smoke.

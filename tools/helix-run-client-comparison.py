@@ -102,6 +102,7 @@ def main():
     adb(serial, "shell", "am", "force-stop", PACKAGE)
     adb(serial, "shell", "run-as", PACKAGE, "mkdir", "-p", "files")
     # Seed pairing identity only on first use. No key bytes printed or saved on host.
+    # A nonzero exit code means no existing key, so check=False is intentional.
     exists = (
         subprocess.run(
             [

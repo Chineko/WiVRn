@@ -23,8 +23,8 @@
 #include "utils/json_string.h"
 #include "wivrn_packets.h"
 
-#include <fstream>
 #include <algorithm>
+#include <fstream>
 #include <functional>
 #include <magic_enum.hpp>
 #include <string_view>

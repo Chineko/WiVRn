@@ -24,6 +24,7 @@
 #include "wivrn_packets.h"
 
 #include <fstream>
+#include <algorithm>
 #include <functional>
 #include <magic_enum.hpp>
 #include <string_view>
@@ -262,6 +263,7 @@ configuration::configuration(xr::system & system, xr::session & session, const s
 
 		for (const auto & f: config_fields())
 			f.load(root, *this);
+		sgsr1_sharpening = std::clamp(sgsr1_sharpening, 0, 100);
 
 		// refresh rate must be supported by this headset, otherwise fall back to the default
 		const auto & rates = session.get_refresh_rates();
@@ -323,6 +325,8 @@ const std::vector<config_field> & configuration::config_fields()
 	        scalar("theme_preset", &configuration::theme_preset),
 	        scalar("theme_accent", &configuration::theme_accent),
 	        scalar("theme_rounding", &configuration::theme_rounding),
+	        scalar("sgsr1_enabled", &configuration::sgsr1_enabled),
+	        scalar("sgsr1_sharpening", &configuration::sgsr1_sharpening),
 	        scalar("theme_card_rounding", &configuration::theme_card_rounding),
 	        scalar("theme_font_scale", &configuration::theme_font_scale),
 	        scalar("theme_background_alpha", &configuration::theme_background_alpha),

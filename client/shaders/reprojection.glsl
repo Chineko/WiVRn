@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(push_constant) uniform pc
 {
@@ -24,6 +25,7 @@ layout(push_constant) uniform pc
 	ivec4 a_rect;
 	vec4 scale;
 	vec4 bias;
+	vec4 sgsr1;
 };
 
 #ifdef VERT_SHADER
@@ -48,6 +50,8 @@ layout(constant_id = 0) const int alpha = 1;
 layout(constant_id = 1) const bool do_srgb = false;
 
 layout(set = 0, binding = 0) uniform sampler2D rgb[alpha + 1];
+
+#include "sgsr1.inc"
 
 layout(location = 0) in vec4 inUV;
 
@@ -82,6 +86,8 @@ void main()
 	}
 	else
 		outColor = texture(rgb[0], inUV.xy).rgba;
+	if (alpha == 0 && sgsr1.x > 0.5)
+		outColor.rgb = sgsr1_filter(inUV.xy, sgsr1.y);
 
 	if (do_srgb)
 	{

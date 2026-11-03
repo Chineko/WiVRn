@@ -453,6 +453,28 @@ void settings_post_processing(const settings_context & ctx)
 	auto & config = ctx.config;
 	auto & default_config = ctx.default_config;
 	std::vector<setting> list;
+	list.push_back({
+	        .id = "##sgsr1",
+	        .label = _("SGSR1"),
+	        .description = _("Reconstruct streamed color with Snapdragon Game Super Resolution 1. Disables compositor filtering for comparison. Opaque streams only."),
+	        .ui = ui_kind::toggle,
+	        .get_bool = [&config] { return config.sgsr1_enabled; },
+	        .set_bool = [&config](bool v) { config.sgsr1_enabled = v; config.save(); },
+	        .default_bool = default_config.sgsr1_enabled,
+	});
+	list.push_back({
+	        .id = "##sgsr1_sharpening",
+	        .label = _("SGSR1 sharpening"),
+	        .description = _("SGSR1 edge sharpness, from 1.0 to 2.0. Percentages are specific to WiVRn; 0% retains SGSR1 reconstruction."),
+	        .ui = ui_kind::slider,
+	        .get_int = [&config] { return std::clamp(config.sgsr1_sharpening, 0, 100); },
+	        .set_int = [&config](int v) { config.sgsr1_sharpening = v; config.save(); },
+	        .v_min = 0,
+	        .v_max = 100,
+	        .fmt = "%d%%",
+	        .default_int = default_config.sgsr1_sharpening,
+	        .enabled = [&config] { return config.sgsr1_enabled; },
+	});
 
 	if (application::get_openxr_post_processing_supported())
 	{
@@ -487,7 +509,8 @@ void settings_post_processing(const settings_context & ctx)
 					        o.push_back(flag_name(f));
 				        return o; },
 			        .title = std::move(title),
-			        .default_int = index(flags, default_config.openxr_post_processing.*member).value_or(0),
+				        .default_int = index(flags, default_config.openxr_post_processing.*member).value_or(0),
+				        .enabled = [&config] { return not config.sgsr1_enabled; },
 			});
 		};
 

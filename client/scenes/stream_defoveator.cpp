@@ -45,7 +45,9 @@ struct vert_pc
 	glm::ivec4 a_rect;
 	std::array<float, 4> scale;
 	std::array<float, 4> bias;
+	std::array<float, 4> sgsr1;
 };
+static_assert(sizeof(vert_pc) == 80);
 
 void stream_defoveator::ensure_vertices(size_t num_vertices)
 {
@@ -428,6 +430,8 @@ void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
 		                             input.rect_a.extent.height),
 		        .scale = scale,
 		        .bias = bias,
+		        .sgsr1 = {application::get_config().sgsr1_enabled ? 1.f : 0.f,
+		                  1.f + std::clamp(application::get_config().sgsr1_sharpening, 0, 100) / 100.f, 0.f, 0.f},
 		};
 
 		device.updateDescriptorSets(descriptor_writes, {});

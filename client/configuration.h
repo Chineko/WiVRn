@@ -110,6 +110,8 @@ public:
 		XrCompositionLayerSettingsFlagsFB sharpening = 0;
 	};
 	openxr_post_processing_settings openxr_post_processing{};
+	bool sgsr1_enabled = false;
+	int sgsr1_sharpening = 75;
 
 	std::string virtual_keyboard_layout = "QWERTY";
 

@@ -1185,6 +1185,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		        layer_view);
 
 		if (const configuration::openxr_post_processing_settings openxr_post_processing = application::get_config().openxr_post_processing;
+		    (not application::get_config().sgsr1_enabled or use_alpha) and
 		    (openxr_post_processing.sharpening | openxr_post_processing.super_sampling) > 0)
 			set_layer_settings(openxr_post_processing.sharpening | openxr_post_processing.super_sampling);
 

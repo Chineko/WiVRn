@@ -105,3 +105,8 @@ cleanup, artifact seals/profile merge and bounded console drain rechecked. No
 native components/settings changed; A PASS. Full B repeated: no addresses or
 private session files published, same native proof and workload boundaries, actual
 VRChat map/start/cleanup gate retained; B PASS before final15s smoke.
+
+Sanitized launcher15s smoke PASS: actual VRChat map/readiness gate, NVENC Main10,
+exit0 and runtime registration restoration. Regenerated public archive extracted
+with identical per-file hashes; configured-address scan passed all archive files
+and expanded APK. Only this sanitized RC source lineage is intended for push.

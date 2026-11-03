@@ -1,0 +1,46 @@
+name: Temporary Helix RC1 CI autofix
+on:
+  push:
+    branches:
+      - fix/helix-rc1-ci-format
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+      - name: Format affected C++ files with CI clang-format 22
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace --entrypoint clang-format ghcr.io/jidicula/clang-format:22 -i client/configuration.cpp client/scenes/gui_settings.cpp client/scenes/stream_defoveator.cpp
+      - name: Install pinned Ruff
+        uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version: "0.16.0"
+          args: "version"
+      - name: Fix Python lint and formatting
+        run: |
+          chmod +x tools/helix-rc.py tools/helix-run-client-comparison.py tools/test-sgsr1-pixels.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("tools/helix-run-client-comparison.py")
+          content = path.read_text()
+          before = "timeout=30).returncode==0"
+          assert content.count(before) == 1
+          path.write_text(content.replace(before, "timeout=30,check=False).returncode==0"))
+          PY
+          ruff check --fix tools/helix-rc.py tools/helix-run-client-comparison.py tools/test-sgsr1-pixels.py
+          ruff format tools/helix-rc.py tools/helix-run-client-comparison.py tools/test-sgsr1-pixels.py
+          ruff check tools/helix-rc.py tools/helix-run-client-comparison.py tools/test-sgsr1-pixels.py
+          ruff format --check tools/helix-rc.py tools/helix-run-client-comparison.py tools/test-sgsr1-pixels.py
+      - name: Commit only six fixed files and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/helix-ci-autofix.yml
+          git add client/configuration.cpp client/scenes/gui_settings.cpp client/scenes/stream_defoveator.cpp tools/helix-rc.py tools/helix-run-client-comparison.py tools/test-sgsr1-pixels.py
+          git diff --cached --check
+          git commit -m "style: fix Helix RC1 clang-format and Ruff checks"
+          git push

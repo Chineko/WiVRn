@@ -25,6 +25,7 @@
 #include "vk/shader.h"
 #include "vk/specialization_constants.h"
 #include <array>
+#include <spdlog/spdlog.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <vk_mem_alloc.h>
@@ -312,6 +313,14 @@ void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
 {
 	if (destination < 0 || destination >= (int)output_images.size())
 		throw std::runtime_error("Invalid destination image index");
+	const auto & config = application::get_config();
+	const int sgsr1_setting = config.sgsr1_enabled and not inputs[0].a
+	                                  ? std::clamp(config.sgsr1_sharpening, 0, 100) : -1;
+	if (sgsr1_setting != last_sgsr1_setting)
+	{
+		spdlog::info("SGSR1 reconstruction enabled={} sharpening_percent={}", sgsr1_setting >= 0, std::max(sgsr1_setting, 0));
+		last_sgsr1_setting = sgsr1_setting;
+	}
 
 	ensure_vertices(std::max(required_vertices(foveation[0]), required_vertices(foveation[1])));
 

@@ -53,6 +53,7 @@ class stream_defoveator
 	std::vector<vk::raii::ImageView> output_image_views;
 	std::vector<vk::raii::Framebuffer> framebuffers;
 	vk::Extent2D output_extent;
+	int last_sgsr1_setting = -2;
 
 	void ensure_vertices(size_t num_vertices);
 	vertex * get_vertices(size_t view);

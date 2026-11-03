@@ -52,6 +52,7 @@ layout(constant_id = 1) const bool do_srgb = false;
 layout(set = 0, binding = 0) uniform sampler2D rgb[alpha + 1];
 
 #include "sgsr1.inc"
+#include "vibrance.inc"
 
 layout(location = 0) in vec4 inUV;
 
@@ -88,6 +89,12 @@ void main()
 		outColor = texture(rgb[0], inUV.xy).rgba;
 	if (alpha == 0 && sgsr1.x > 0.5)
 		outColor.rgb = sgsr1_filter(inUV.xy, sgsr1.y);
+	if (sgsr1.z > 0.0 && (alpha == 0 || outColor.a >= 0.02))
+	{
+		// Color decoder is premultiplied when a separate alpha stream is used.
+		float opacity = alpha == 0 ? 1.0 : outColor.a;
+		outColor.rgb = apply_vibrance(outColor.rgb / opacity, sgsr1.z) * opacity;
+	}
 
 	if (do_srgb)
 	{

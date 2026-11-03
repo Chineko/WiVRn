@@ -476,6 +476,19 @@ void settings_post_processing(const settings_context & ctx)
 	        .enabled = [&config] { return config.sgsr1_enabled; },
 	});
 
+	list.push_back({
+	        .id = "##vibrance",
+	        .label = _("Vibrance"),
+	        .description = _("Boost muted colors while preserving neutral grays. 0% keeps the original colors."),
+	        .ui = ui_kind::slider,
+	        .get_int = [&config] { return std::clamp(config.vibrance, 0, 100); },
+	        .set_int = [&config](int v) { config.vibrance = v; config.save(); },
+	        .v_min = 0,
+	        .v_max = 100,
+	        .fmt = "%d%%",
+	        .default_int = default_config.vibrance,
+	});
+
 	if (application::get_openxr_post_processing_supported())
 	{
 		auto flag_name = [](XrCompositionLayerSettingsFlagsFB f) -> std::string {

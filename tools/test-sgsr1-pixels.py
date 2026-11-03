@@ -36,8 +36,9 @@ def shader(kind,source):
         raise RuntimeError(log.value.decode())
     return s
 inc=(Path(__file__).resolve().parents[1]/'client/shaders/sgsr1.inc').read_text()
+vibrance=(Path(__file__).resolve().parents[1]/'client/shaders/vibrance.inc').read_text()
 vs=shader(0x8B31,'#version 310 es\nvoid main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0,1);}')
-fs=shader(0x8B30,'#version 310 es\nprecision highp float; precision highp int;\nuniform ivec4 rgb_rect; uniform sampler2D rgb[1]; uniform float strength; layout(location=0) out vec4 color;\n'+inc+'\nvoid main(){color=vec4(sgsr1_filter(gl_FragCoord.xy/32.,strength),1);}')
+fs=shader(0x8B30,'#version 310 es\nprecision highp float; precision highp int;\nuniform ivec4 rgb_rect; uniform sampler2D rgb[1]; uniform float strength; uniform float vibrance_amount; layout(location=0) out vec4 color;\n'+inc+vibrance+'\nvoid main(){color=vec4(apply_vibrance(sgsr1_filter(gl_FragCoord.xy/32.,strength),vibrance_amount),1);}')
 program=fn(gl,'glCreateProgram',uint)()
 attach=fn(gl,'glAttachShader',None,uint,uint)
 attach(program,vs);attach(program,fs)
@@ -52,9 +53,10 @@ fn(gl,'glBindTexture',None,uint,uint)(0x0DE1,texture)
 for key,value in ((0x2801,0x2601),(0x2800,0x2601),(0x2802,0x812F),(0x2803,0x812F)):
     fn(gl,'glTexParameteri',None,uint,uint,integer)(0x0DE1,key,value)
 fn(gl,'glViewport',None,integer,integer,integer,integer)(0,0,32,32)
-def render(image,strength):
+def render(image,strength,vibrance_amount=0.):
     fn(gl,'glTexImage2D',None,uint,integer,integer,integer,integer,integer,uint,uint,ptr)(0x0DE1,0,0x8058,16,16,0,0x1908,0x1401,image.ctypes.data)
     fn(gl,'glUniform1f',None,integer,c.c_float)(location('strength'),strength)
+    fn(gl,'glUniform1f',None,integer,c.c_float)(location('vibrance_amount'),vibrance_amount)
     fn(gl,'glDrawArrays',None,uint,integer,integer)(4,0,3)
     output=np.empty((32,32,4),dtype=np.uint8)
     fn(gl,'glReadPixels',None,integer,integer,integer,integer,uint,uint,ptr)(0,0,32,32,0x1908,0x1401,output.ctypes.data)
@@ -72,6 +74,19 @@ assert not np.array_equal(low,middle), 'slider has no effect'
 assert not np.array_equal(low,high), 'sharpness endpoints equal'
 assert np.all((high[:,:,:3]>=35)&(high[:,:,:3]<=215)), 'edge overshoot'
 print('PASS: constant image/eye borders preserved; slider changes diagonal-edge reconstruction; bounded output')
+for level in (0,32,128,224,255):
+    gray=np.full((16,16,4),level,dtype=np.uint8);gray[:,:,3]=255
+    assert np.max(np.abs(render(gray,1.75,1.)[:,:,:3].astype(int)-level))<=1
+muted=flat.copy();muted[:,:,:3]=[130,100,90]
+unchanged=render(muted,1.75,0.)[16,16,:3].astype(float)
+boosted=render(muted,1.75,1.)[16,16,:3].astype(float)
+assert np.max(np.abs(unchanged-[130,100,90]))<=1, '0% must preserve color'
+assert np.ptp(boosted)>np.ptp(unchanged), 'muted colors not boosted'
+assert abs(np.dot(boosted-unchanged,[.2126,.7152,.0722]))<1.5, 'luma changed'
+for color in ([255,0,0],[0,255,0],[0,0,255],[1,2,3],[253,254,255]):
+    image=flat.copy();image[:,:,:3]=color
+    assert np.max(np.abs(render(image,1.75,1.)[:,:,:3].astype(int)-color))<=5
+print('PASS: vibrance preserves grays/0%, boosts muted chroma, bounds gamut and preserves luma')
 fn(egl,'eglMakeCurrent',uint,ptr,ptr,ptr,ptr)(display,None,None,None)
 fn(egl,'eglDestroyContext',uint,ptr,ptr)(display,context)
 fn(egl,'eglDestroySurface',uint,ptr,ptr)(display,surface)

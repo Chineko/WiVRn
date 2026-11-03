@@ -314,6 +314,12 @@ void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
 	if (destination < 0 || destination >= (int)output_images.size())
 		throw std::runtime_error("Invalid destination image index");
 	const auto & config = application::get_config();
+	const int vibrance_setting = std::clamp(config.vibrance, 0, 100);
+	if (vibrance_setting != last_vibrance_setting)
+	{
+		spdlog::info("Color adjustment vibrance_percent={}", vibrance_setting);
+		last_vibrance_setting = vibrance_setting;
+	}
 	const int sgsr1_setting = config.sgsr1_enabled and not inputs[0].a
 	                                  ? std::clamp(config.sgsr1_sharpening, 0, 100) : -1;
 	if (sgsr1_setting != last_sgsr1_setting)
@@ -440,7 +446,8 @@ void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
 		        .scale = scale,
 		        .bias = bias,
 		        .sgsr1 = {application::get_config().sgsr1_enabled ? 1.f : 0.f,
-		                  1.f + std::clamp(application::get_config().sgsr1_sharpening, 0, 100) / 100.f, 0.f, 0.f},
+		                  1.f + std::clamp(application::get_config().sgsr1_sharpening, 0, 100) / 100.f,
+		                  std::clamp(application::get_config().vibrance, 0, 100) / 100.f, 0.f},
 		};
 
 		device.updateDescriptorSets(descriptor_writes, {});

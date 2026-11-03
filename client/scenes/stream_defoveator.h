@@ -54,6 +54,7 @@ class stream_defoveator
 	std::vector<vk::raii::Framebuffer> framebuffers;
 	vk::Extent2D output_extent;
 	int last_sgsr1_setting = -2;
+	int last_vibrance_setting = -1;
 
 	void ensure_vertices(size_t num_vertices);
 	vertex * get_vertices(size_t view);

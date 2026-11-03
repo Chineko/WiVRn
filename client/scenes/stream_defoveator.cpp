@@ -25,9 +25,9 @@
 #include "vk/shader.h"
 #include "vk/specialization_constants.h"
 #include <array>
-#include <spdlog/spdlog.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <spdlog/spdlog.h>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_raii.hpp>
@@ -321,7 +321,8 @@ void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
 		last_vibrance_setting = vibrance_setting;
 	}
 	const int sgsr1_setting = config.sgsr1_enabled and not inputs[0].a
-	                                  ? std::clamp(config.sgsr1_sharpening, 0, 100) : -1;
+	                                  ? std::clamp(config.sgsr1_sharpening, 0, 100)
+	                                  : -1;
 	if (sgsr1_setting != last_sgsr1_setting)
 	{
 		spdlog::info("SGSR1 reconstruction enabled={} sharpening_percent={}", sgsr1_setting >= 0, std::max(sgsr1_setting, 0));
@@ -447,7 +448,8 @@ void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
 		        .bias = bias,
 		        .sgsr1 = {application::get_config().sgsr1_enabled ? 1.f : 0.f,
 		                  1.f + std::clamp(application::get_config().sgsr1_sharpening, 0, 100) / 100.f,
-		                  std::clamp(application::get_config().vibrance, 0, 100) / 100.f, 0.f},
+		                  std::clamp(application::get_config().vibrance, 0, 100) / 100.f,
+		                  0.f},
 		};
 
 		device.updateDescriptorSets(descriptor_writes, {});

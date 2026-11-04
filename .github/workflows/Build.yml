@@ -111,9 +111,10 @@ jobs:
 
     - name: Release build dependencies
       uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/') && matrix.config.preset == 'server'
+      # Helix candidates publish separately sealed, locally tested artifacts.
+      if: startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/helix-') && matrix.config.preset == 'server'
       with:
-        tag_name: ${{ inputs.ref }}
+        tag_name: ${{ github.ref_name }}
         generate_release_notes: true
         draft: true
         files: server-build-deps.tar.xz
@@ -376,7 +377,7 @@ jobs:
         path: debug/**/*.so
 
     - name: Push to Oculus store
-      if: ${{ matrix.buildtype == 'Oculus' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && steps.secret-check.outputs.oculus-token == 'true' }}
+      if: ${{ matrix.buildtype == 'Oculus' && !startsWith(github.ref, 'refs/tags/helix-') && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && steps.secret-check.outputs.oculus-token == 'true' }}
       env:
         OCULUS_TOKEN: ${{ secrets.OCULUS_TOKEN }}
       run: |
@@ -471,7 +472,8 @@ jobs:
     name: Create release
     runs-on: ubuntu-22.04
     needs: [build-linux, build-android, build-server-flatpak, build-ubuntu]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    # Do not mix generic CI artifacts into a sealed Helix release.
+    if: success() && startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/helix-')
 
     steps:
     - uses: actions/checkout@v6
@@ -512,7 +514,7 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v3
       with:
-        tag_name: ${{ inputs.ref }}
+        tag_name: ${{ github.ref_name }}
         generate_release_notes: true
         draft: true
         files: |

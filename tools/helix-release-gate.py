@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--commit", required=True)
     parser.add_argument("--repo", default="Chineko/WiVRn")
     parser.add_argument("--branch", default="helix-rc1")
+    parser.add_argument("--tag", required=True, help="Candidate tag; tag-only CI must also pass")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", args.commit):
         parser.error("--commit must be the full 40-character source identity")
@@ -26,23 +27,24 @@ def main():
         )
     )
     failures = []
-    for name in ("Build", "Format", "Locales"):
-        runs = [
-            run
-            for run in data["workflow_runs"]
-            if run["head_sha"] == args.commit
-            and run["head_branch"] == args.branch
-            and run["event"] == "push"
-            and run["name"] == name
-        ]
-        if not runs:
-            failures.append(f"{name}: missing")
-            continue
-        run = max(runs, key=lambda item: item["id"])
-        if run["status"] != "completed" or run["conclusion"] != "success":
-            failures.append(f"{name}: {run['status']} / {run['conclusion']}")
-        else:
-            print(f"PASS {name}: {run['html_url']}")
+    for ref in (args.branch, args.tag):
+        for name in ("Build", "Format", "Locales"):
+            runs = [
+                run
+                for run in data["workflow_runs"]
+                if run["head_sha"] == args.commit
+                and run["head_branch"] == ref
+                and run["event"] == "push"
+                and run["name"] == name
+            ]
+            if not runs:
+                failures.append(f"{ref} / {name}: missing")
+                continue
+            run = max(runs, key=lambda item: item["id"])
+            if run["status"] != "completed" or run["conclusion"] != "success":
+                failures.append(f"{ref} / {name}: {run['status']} / {run['conclusion']}")
+            else:
+                print(f"PASS {ref} / {name}: {run['html_url']}")
     if failures:
         raise SystemExit("RELEASE BLOCKED: " + "; ".join(failures))
     print(f"RELEASE CI GATE PASS: {args.commit}")

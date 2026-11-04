@@ -1,0 +1,20 @@
+{
+  "release": "helix-hevc10-sgsr1-rc2",
+  "server_source_commit": "f87cbf84acea3e52370a7c15d4ed63a2d870ce87",
+  "client_source_commit": "81debe382c4ec0b96bf500f205c41a801c54c17e",
+  "artifacts": {
+    "client.apk": "e419f94812a9ee5c4f090f1caa16e34e54c4e5aa90c732994c820807807b671c",
+    "run-wivrn.py": "864d5d6a04a55761e6a429f7e8452470d0d27f6b64a858d016971830c4d6980b",
+    "runtime-template.json": "5a5adf710cc3739938eeff2849bd7eee7f65039c90ce406915e38e13bfe001d9",
+    "COPYING": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "SGSR1.LICENSE": "bc496633d3db8c6ca1362216ec382d361b69c7d5518acd6bbfd91503febfb3ef",
+    "nvidia-profile.json": "7c4ec67ad28ef3d934bf851d85a88250bbdd1972858013fba82dfed632efcaa0",
+    "README.md": "c43eeb036c6016a9989842ed611a061b92eac6264811a62b5947f39084333519",
+    "server/wivrn-server": "b45b5128b1b426efcac9a8ce546168800634693ff2315e2860bd4e398f3d1d82",
+    "runtime/libopenxr_wivrn.so": "7dcc860b11730818da03e3f7e817685a6674d9ce384b54a50b8c9946531c24ed",
+    "runtime/libmonado_wivrn.so": "de9ac0cf45920bcbae06534f84822de2093771ed914d7327d0ff7f0a0744d1fe"
+  },
+  "external_artifacts": {
+    "/opt/xrizer/bin/linux64/vrclient.so": "d3568c9ad9378b5280d3d229871552091cf117dfd207f7f65d0eb1a64316817d"
+  }
+}

@@ -522,8 +522,8 @@ void settings_post_processing(const settings_context & ctx)
 					        o.push_back(flag_name(f));
 				        return o; },
 			        .title = std::move(title),
-				        .default_int = index(flags, default_config.openxr_post_processing.*member).value_or(0),
-				        .enabled = [&config] { return not config.sgsr1_enabled; },
+			        .default_int = index(flags, default_config.openxr_post_processing.*member).value_or(0),
+			        .enabled = [&config] { return not config.sgsr1_enabled; },
 			});
 		};
 
